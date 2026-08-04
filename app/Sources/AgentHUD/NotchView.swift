@@ -44,10 +44,13 @@ struct NotchRootView: View {
                 // there would silhouette the physical cutout.
                 LinearGradient(stops: [
                     .init(color: .black, location: 0),
-                    .init(color: .black, location: 0.65),
+                    .init(color: .black, location: 0.45),
+                    .init(color: .black.opacity(0.75), location: 0.62),
+                    .init(color: .black.opacity(0.4), location: 0.78),
+                    .init(color: .black.opacity(0.15), location: 0.9),
                     .init(color: .clear, location: 1),
                 ], startPoint: .top, endPoint: .bottom)
-                .frame(height: metrics.notchHeight + 16)
+                .frame(height: metrics.notchHeight + 40)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .allowsHitTesting(false)
             }
