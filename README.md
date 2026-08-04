@@ -1,3 +1,25 @@
+<pre>
+ █████╗  ██████╗ ███████╗███╗   ██╗████████╗    ██╗  ██╗██╗   ██╗██████╗
+██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝    ██║  ██║██║   ██║██╔══██╗
+███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║       ███████║██║   ██║██║  ██║
+██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║       ██╔══██║██║   ██║██║  ██║
+██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║       ██║  ██║╚██████╔╝██████╔╝
+╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝       ╚═╝  ╚═╝ ╚═════╝ ╚═════╝
+
+              your agents · every machine · one glance
+
+──────────────────────────────────────────────────────────────────────────
+
+  ⚡  Claude Code everywhere — this Mac, your SSH boxes, browser tabs
+  ●  live sessions with real names, context %, model & effort
+  ▎▎  the side bars — pulsing blue means working, orange needs you
+  ✓  truthful endings: finished, interrupted, or errored — never a lie
+  ☕  keep-awake that knows when agents are working
+  ♪  your music in the notch — Spotify, Apple Music, even YouTube
+
+──────────────────────────────────────────────────────────────────────────
+</pre>
+
 # Agent HUD
 
 A notch-style HUD for AI agents. A black panel hugs the MacBook notch (or floats
