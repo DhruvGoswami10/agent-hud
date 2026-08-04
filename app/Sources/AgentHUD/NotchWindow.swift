@@ -111,7 +111,7 @@ final class NotchWindowController {
                 ? NSSize(width: m.notchWidth + 16, height: m.notchHeight)
                 : NSSize(width: m.notchWidth, height: m.notchHeight + 4)
         case .peek:
-            return NSSize(width: max(m.notchWidth + 240, 470), height: m.hasNotch ? m.notchHeight + 90 : 100)
+            return NSSize(width: max(m.notchWidth + 240, 470), height: m.hasNotch ? m.notchHeight + 80 : 90)
         case .open:
             return NSSize(width: 760, height: 520)
         }

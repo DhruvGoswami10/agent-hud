@@ -35,6 +35,9 @@ struct NotchRootView: View {
                         .opacity(showContent ? 1 : 0)
                 }
             }
+            // Fill the whole shape before clipping — otherwise the clip hugs
+            // the content's own bounds and glows render as a second card.
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .clipShape(NotchShape(topRadius: topRadius, bottomRadius: bottomRadius))
         }
         .frame(width: sz.width, height: sz.height, alignment: .top)
@@ -42,17 +45,14 @@ struct NotchRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .contentShape(Rectangle())
         .onTapGesture { if !state.hudState.isOpen { state.openPanel() } }
-        .onChange(of: state.hudState.isCollapsed) { _, collapsed in
-            if collapsed {
-                // Hide instantly so the shape retracts empty and clean.
-                var t = Transaction()
-                t.disablesAnimations = true
-                withTransaction(t) { showContent = false }
-            } else {
-                var t = Transaction()
-                t.disablesAnimations = true
-                withTransaction(t) { showContent = false }
-                // Reveal as the shape settles — synced to the animation style.
+        .onChange(of: state.hudState.stage) { _, stage in
+            // Every stage change resizes the shape; content must never be
+            // visible mid-growth (it reflows and overlaps). Hide instantly,
+            // reveal as the shape settles — including peek → open on hover.
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) { showContent = false }
+            if stage != 0 {
                 withAnimation(.easeOut(duration: 0.2).delay(state.animStyle.contentDelay)) {
                     showContent = true
                 }

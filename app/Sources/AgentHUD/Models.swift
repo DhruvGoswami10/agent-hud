@@ -156,6 +156,15 @@ enum HUDState {
 
     var isOpen: Bool { if case .open = self { return true } else { return false } }
     var isCollapsed: Bool { if case .collapsed = self { return true } else { return false } }
+
+    /// Stage discriminator (peek content changes keep the same stage).
+    var stage: Int {
+        switch self {
+        case .collapsed: return 0
+        case .peek: return 1
+        case .open: return 2
+        }
+    }
 }
 
 extension NSImage {
