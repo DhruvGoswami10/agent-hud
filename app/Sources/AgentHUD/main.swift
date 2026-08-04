@@ -31,6 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in state.syncRegistry(host: host, entries: entries, usage: usage, hours: hours) }
         }, onMusicState: { np in
             Task { @MainActor in state.setWebNowPlaying(np) }
+        }, onDebug: {
+            DispatchQueue.main.sync { MainActor.assumeIsolated { state.debugDump() } }
         })
         state.webMusicQueue = server.musicCommands
         do {

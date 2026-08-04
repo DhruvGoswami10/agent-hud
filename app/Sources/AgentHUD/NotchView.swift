@@ -335,6 +335,12 @@ private struct OpenPanel: View {
             Spacer()
             if state.runningCount > 0 { countChip(state.runningCount, "working", .running) }
             if state.attentionCount > 0 { countChip(state.attentionCount, "needs you", .attention) }
+            if state.muted {
+                Image(systemName: "bell.slash.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(EventKind.attention.color)
+                    .help("Notifications muted — click the sparkle menu to unmute")
+            }
             awakeChip
             Button { state.clearEvents() } label: {
                 Image(systemName: "trash").font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))

@@ -34,6 +34,7 @@ final class AppState: ObservableObject {
             updateCaffeine()
         }
     }
+    @Published var muted: Bool { didSet { UserDefaults.standard.set(muted, forKey: "muted") } }
 
     @Published private(set) var nowPlaying: NowPlaying?
     @Published private(set) var nowPlayingArt: NSImage?
@@ -65,6 +66,26 @@ final class AppState: ObservableObject {
         static let local = String(ProcessInfo.processInfo.hostName.split(separator: ".").first ?? "mac")
     }
 
+    /// JSON snapshot for GET /debug — the observability we owe ourselves.
+    func debugDump() -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "HH:mm:ss"
+        let evs = events.prefix(50).map { e -> [String: String] in
+            ["t": fmt.string(from: e.ts), "kind": e.kind.rawValue, "label": e.label,
+             "hook": e.hook, "msg": String(e.message.prefix(80))]
+        }
+        let sess = sessions.map { s -> [String: String] in
+            ["name": sessionDisplayName(s.sessionName, project: s.project),
+             "host": s.host, "kind": s.kind.rawValue]
+        }
+        let obj: [String: Any] = [
+            "events": evs, "sessions": sess,
+            "muted": muted, "banners": systemNotifications, "sounds": sounds,
+        ]
+        let data = (try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted])) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
+
     func focusTerminal() {
         for bid in ["com.cmuxterm.app", "com.googlecode.iterm2", "com.apple.Terminal"] {
             if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bid).first {
@@ -88,6 +109,7 @@ final class AppState: ObservableObject {
         animStyle = AnimStyle(rawValue: d.string(forKey: "animStyle") ?? "") ?? .bouncy
         keepAwake = d.object(forKey: "keepAwake") as? Bool ?? false
         autoAwake = d.object(forKey: "autoAwake") as? Bool ?? true
+        muted = d.object(forKey: "muted") as? Bool ?? false
         updateCaffeine()
     }
 
@@ -106,10 +128,22 @@ final class AppState: ObservableObject {
 
     // MARK: - Agent events
 
+    /// Runs shorter than this get only the silent peek — you were probably
+    /// watching that session anyway; banners are for runs you walked away from.
+    private static let longRunThreshold: TimeInterval = 45
+    private var runStarts: [String: Date] = [:]
+
     func apply(_ event: AgentEvent) {
         eventsReceived += 1
         events.insert(event, at: 0)
         if events.count > 150 { events.removeLast(events.count - 150) }
+
+        if event.kind == .running, runStarts[event.sourceKey] == nil {
+            runStarts[event.sourceKey] = event.ts
+        }
+        let runDuration = runStarts[event.sourceKey].map { event.ts.timeIntervalSince($0) } ?? .infinity
+        if event.kind == .done { runStarts.removeValue(forKey: event.sourceKey) }
+
         upsertSession(event)
 
         if !hudState.isOpen {
@@ -119,8 +153,12 @@ final class AppState: ObservableObject {
             case .running, .info: break  // your own prompt isn't news
             }
         }
-        Notifier.shared.post(for: event, enabled: systemNotifications)
-        if sounds { Sound.play(for: event.kind) }
+        let loud = !muted && (event.kind == .attention
+            || (event.kind == .done && runDuration >= Self.longRunThreshold))
+        if loud {
+            Notifier.shared.post(for: event, enabled: systemNotifications)
+            if sounds { Sound.play(for: event.kind) }
+        }
         refreshCollapsedFrame()
     }
 

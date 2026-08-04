@@ -12,6 +12,7 @@ final class StatusItemController: NSObject {
     private var copyItem: NSMenuItem!
     private var sideBarsItem: NSMenuItem!
     private var musicItem: NSMenuItem!
+    private var muteItem: NSMenuItem!
     private var awakeItem: NSMenuItem!
     private var autoAwakeItem: NSMenuItem!
     private var animItems: [NSMenuItem] = []
@@ -30,6 +31,7 @@ final class StatusItemController: NSObject {
         copyItem = makeItem("Expand on Copy", #selector(toggleCopy), "")
         sideBarsItem = makeItem("Side Indicator Bars", #selector(toggleSideBars), "")
         musicItem = makeItem("Music Controls", #selector(toggleMusic), "")
+        muteItem = makeItem("Mute Notifications", #selector(toggleMute), "m")
         awakeItem = makeItem("Keep Mac Awake", #selector(toggleAwake), "")
         autoAwakeItem = makeItem("Auto-Awake While Agents Work", #selector(toggleAutoAwake), "")
         menu.addItem(notifItem)
@@ -38,6 +40,7 @@ final class StatusItemController: NSObject {
         menu.addItem(sideBarsItem)
         menu.addItem(musicItem)
         menu.addItem(.separator())
+        menu.addItem(muteItem)
         menu.addItem(awakeItem)
         menu.addItem(autoAwakeItem)
 
@@ -87,6 +90,7 @@ final class StatusItemController: NSObject {
         copyItem?.state = state.expandOnCopy ? .on : .off
         sideBarsItem?.state = state.sideBars ? .on : .off
         musicItem?.state = state.musicEnabled ? .on : .off
+        muteItem?.state = state.muted ? .on : .off
         awakeItem?.state = state.keepAwake ? .on : .off
         autoAwakeItem?.state = state.autoAwake ? .on : .off
         for item in animItems {
@@ -108,6 +112,7 @@ final class StatusItemController: NSObject {
     @objc private func toggleCopy() { state.expandOnCopy.toggle() }
     @objc private func toggleSideBars() { state.sideBars.toggle() }
     @objc private func toggleMusic() { state.musicEnabled.toggle() }
+    @objc private func toggleMute() { state.muted.toggle() }
     @objc private func toggleAwake() { state.keepAwake.toggle() }
     @objc private func toggleAutoAwake() { state.autoAwake.toggle() }
 

@@ -29,6 +29,7 @@ final class EventServer {
     private let onEvent: (AgentEvent) -> Void
     private let onSessions: (String, [LocalSessionEntry], [String: Int], [Int: Int]) -> Void
     private let onMusicState: (NowPlaying) -> Void
+    private let onDebug: () -> String
     let musicCommands = CommandQueue()
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "agenthud.server")
@@ -39,11 +40,13 @@ final class EventServer {
     init(port: UInt16,
          onEvent: @escaping (AgentEvent) -> Void,
          onSessions: @escaping (String, [LocalSessionEntry], [String: Int], [Int: Int]) -> Void,
-         onMusicState: @escaping (NowPlaying) -> Void) {
+         onMusicState: @escaping (NowPlaying) -> Void,
+         onDebug: @escaping () -> String = { "{}" }) {
         self.port = port
         self.onEvent = onEvent
         self.onSessions = onSessions
         self.onMusicState = onMusicState
+        self.onDebug = onDebug
     }
 
     func start() throws {
@@ -157,6 +160,8 @@ final class EventServer {
             }
             onSessions(host, entries, usage, hours)
             respond(conn, status: "200 OK", body: #"{"ok":true,"sessions":\#(entries.count)}"#)
+        case ("GET", "/debug"):
+            respond(conn, status: "200 OK", body: onDebug())
         case ("GET", "/health"):
             lock.lock(); let n = received; let m = musicReceived; lock.unlock()
             respond(conn, status: "200 OK", body: #"{"ok":true,"received":\#(n),"music":\#(m)}"#)

@@ -97,6 +97,14 @@ def main():
     if not kind:
         return
 
+    # Claude Code fires Notification both for real permission prompts AND for
+    # "waiting for your input" idle pings ~60s after every turn. The latter is
+    # not news — you already saw the turn finish — so drop it entirely.
+    if ev == "Notification":
+        text = ((d.get("message") or "") + " " + (d.get("title") or "")).lower()
+        if "waiting for your input" in text or "waiting for input" in text:
+            return
+
     transcript = d.get("transcript_path")
     msg, title = "", ""
     if ev == "Stop":
