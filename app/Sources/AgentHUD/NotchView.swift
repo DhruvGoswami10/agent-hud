@@ -39,21 +39,6 @@ struct NotchRootView: View {
             // the content's own bounds and glows render as a second card.
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .clipShape(NotchShape(topRadius: topRadius, bottomRadius: bottomRadius))
-            if metrics.hasNotch && !state.hudState.isCollapsed {
-                // Keep the notch band pure black when expanded — glow spill
-                // there would silhouette the physical cutout.
-                LinearGradient(stops: [
-                    .init(color: .black, location: 0),
-                    .init(color: .black, location: 0.45),
-                    .init(color: .black.opacity(0.75), location: 0.62),
-                    .init(color: .black.opacity(0.4), location: 0.78),
-                    .init(color: .black.opacity(0.15), location: 0.9),
-                    .init(color: .clear, location: 1),
-                ], startPoint: .top, endPoint: .bottom)
-                .frame(height: metrics.notchHeight + 40)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .allowsHitTesting(false)
-            }
         }
         .frame(width: sz.width, height: sz.height, alignment: .top)
         .animation(state.hudState.isCollapsed ? state.animStyle.collapseAnimation : state.animStyle.animation, value: sz)
