@@ -16,10 +16,12 @@ while true; do
     if [ -f "$CONF" ]; then
         while IFS= read -r h; do
             case "$h" in ""|\#*|*\**) continue ;; esac
-            if ! ssh -o BatchMode=yes -o ConnectTimeout=8 -o PermitLocalCommand=no \
+            # -n is critical: without it ssh eats the rest of hosts.conf
+            # from the loop's stdin and only the first host gets a tunnel.
+            if ! ssh -n -o BatchMode=yes -o ConnectTimeout=8 -o PermitLocalCommand=no \
                      -o ClearAllForwardings=yes "$h" \
                      'curl -s -m 2 http://127.0.0.1:48085/health >/dev/null 2>&1' 2>/dev/null; then
-                ssh -o BatchMode=yes -o ConnectTimeout=10 -o ExitOnForwardFailure=yes \
+                ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ExitOnForwardFailure=yes \
                     -o PermitLocalCommand=no -N -R 48085:127.0.0.1:48085 "$h" >/dev/null 2>&1 &
             fi
         done < "$CONF"
