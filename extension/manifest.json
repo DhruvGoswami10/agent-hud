@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Agent HUD Bridge",
+  "version": "0.1.0",
+  "description": "Feeds YouTube now-playing and AI chat activity (ChatGPT, Claude) to the Agent HUD notch app on localhost.",
+  "host_permissions": ["http://127.0.0.1:48085/*"],
+  "background": { "service_worker": "bg.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*", "https://music.youtube.com/*"],
+      "js": ["youtube.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+      "js": ["chatgpt.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://claude.ai/*"],
+      "js": ["claude.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

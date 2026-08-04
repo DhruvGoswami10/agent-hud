@@ -1,0 +1,22 @@
+#!/bin/sh
+# Claude Code hook -> Agent HUD forwarder.
+# Reads the hook JSON on stdin, POSTs an event to the HUD listener.
+# Never blocks the agent, never fails, never writes to stdout
+# (UserPromptSubmit hook stdout would be injected into the model's context).
+#
+# Works identically on the Mac (localhost) and on remote boxes, where
+# 127.0.0.1:48085 is carried back to the Mac by an SSH reverse tunnel.
+# Override the target with AGENT_HUD_URL if needed.
+
+URL="${AGENT_HUD_URL:-http://127.0.0.1:48085}"
+DIR="$(cd "$(dirname "$0")" && pwd)"
+
+command -v python3 >/dev/null 2>&1 || exit 0
+command -v curl >/dev/null 2>&1 || exit 0
+
+PAYLOAD="$(python3 "$DIR/agent-hud-payload.py" 2>/dev/null)"
+[ -n "$PAYLOAD" ] || exit 0
+
+curl -s -m 2 -X POST -H "Content-Type: application/json" \
+    -d "$PAYLOAD" "$URL/event" >/dev/null 2>&1 || true
+exit 0

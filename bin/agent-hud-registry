@@ -1,0 +1,271 @@
+#!/usr/bin/env python3
+"""Stream Claude Code's live session registry (~/.claude/sessions) to Agent HUD.
+
+Runs on every machine (the Mac app spawns one locally; remote boxes nohup it).
+POSTs a snapshot to the HUD every few seconds — remotely that goes through the
+SSH reverse tunnel (127.0.0.1:48085). Failures are silently retried.
+
+The registry's `name` field falls back to an auto-generated "<user>-<xx>" when
+a session is resumed, even if the user named it — the real name lives in the
+transcript as `custom-title` records, so auto-looking names are resolved from
+there (full scan once per session, then cheap tail scans to catch renames).
+
+Start remotely with:
+    nohup ~/agent-hud/bin/agent-hud-registry </dev/null >/dev/null 2>&1 &
+Debug with:
+    AGENT_HUD_ONESHOT=1 ~/agent-hud/bin/agent-hud-registry
+"""
+import calendar
+import getpass
+import glob
+import json
+import os
+import re
+import socket
+import time
+import urllib.request
+
+URL = os.environ.get("AGENT_HUD_URL", "http://127.0.0.1:48085")
+INTERVAL = float(os.environ.get("AGENT_HUD_REGISTRY_INTERVAL", "5"))
+HOST = socket.gethostname().split(".")[0]
+
+try:
+    _user = getpass.getuser()
+except Exception:
+    _user = os.environ.get("USER", "")
+AUTO_NAME = re.compile("^" + re.escape(re.sub(r"[^a-zA-Z0-9]+", "-", _user)) + r"-[0-9a-f]{2}$")
+
+_titles = {}  # sessionId -> [full_scan_done, title]
+
+
+def transcript_for(sid):
+    hits = glob.glob(os.path.expanduser("~/.claude/projects/*/%s.jsonl" % sid))
+    return hits[0] if hits else None
+
+
+def scan_title(path, tail_only):
+    title = ""
+    try:
+        with open(path, "rb") as f:
+            if tail_only:
+                size = os.fstat(f.fileno()).st_size
+                f.seek(max(0, size - 65536))
+            for line in f:
+                if b"custom-title" not in line:
+                    continue
+                try:
+                    j = json.loads(line)
+                except Exception:
+                    continue
+                if j.get("type") == "custom-title" and j.get("customTitle"):
+                    title = j["customTitle"]
+    except Exception:
+        pass
+    return title
+
+
+def display_name(sid, reg_name):
+    if reg_name and not AUTO_NAME.match(reg_name):
+        return reg_name
+    path = transcript_for(sid)
+    if path is None:
+        return reg_name
+    entry = _titles.get(sid)
+    if entry is None:
+        entry = _titles[sid] = [True, scan_title(path, tail_only=False)]
+    else:
+        t = scan_title(path, tail_only=True)
+        if t:
+            entry[1] = t
+    return entry[1] or reg_name
+
+
+_stats = {}  # sessionId -> [transcript_mtime, stats-dict]
+
+
+def session_stats(sid):
+    """Model + context/token stats from the transcript's last assistant usage record."""
+    path = transcript_for(sid)
+    if not path:
+        return {}
+    try:
+        mtime = os.path.getmtime(path)
+    except Exception:
+        return {}
+    cached = _stats.get(sid)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    st = {"model": "", "effort": "", "ctx_used": 0, "last_in": 0, "last_out": 0, "outcome": ""}
+    try:
+        with open(path, "rb") as f:
+            size = os.fstat(f.fileno()).st_size
+            f.seek(max(0, size - 262144))
+            for line in f:
+                # Truthful turn outcome: the LAST marker in the file wins.
+                if b"[Request interrupted by user" in line:
+                    st["outcome"] = "interrupted"
+                    continue
+                if b'"isApiErrorMessage":true' in line:
+                    st["outcome"] = "error"
+                    continue
+                if b'"usage"' not in line:
+                    continue
+                try:
+                    j = json.loads(line)
+                except Exception:
+                    continue
+                if j.get("type") != "assistant":
+                    continue
+                m = j.get("message") or {}
+                u = m.get("usage") or {}
+                if not u:
+                    continue
+                inp = u.get("input_tokens") or 0
+                cc = u.get("cache_creation_input_tokens") or 0
+                cr = u.get("cache_read_input_tokens") or 0
+                out = u.get("output_tokens") or 0
+                if inp + cc + cr == 0:
+                    continue
+                st["model"] = m.get("model") or st["model"]
+                st["effort"] = j.get("effort") or st["effort"]
+                st["ctx_used"] = inp + cc + cr + out
+                st["last_in"] = inp + cc + cr
+                st["last_out"] = out
+                st["outcome"] = "finished"
+    except Exception:
+        pass
+    _stats[sid] = [mtime, st]
+    return st
+
+
+def snapshot():
+    d = os.path.expanduser("~/.claude/sessions")
+    out = []
+    cutoff = time.time() * 1000 - 24 * 3600 * 1000
+    try:
+        files = os.listdir(d)
+    except Exception:
+        return out
+    for fn in files:
+        if not fn.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(d, fn)) as f:
+                j = json.load(f)
+        except Exception:
+            continue
+        sid = j.get("sessionId")
+        if not sid or (j.get("updatedAt") or 0) < cutoff:
+            continue
+        row = {
+            "sessionId": sid,
+            "name": display_name(sid, j.get("name") or ""),
+            "cwd": j.get("cwd") or "",
+            "status": j.get("status") or "",
+            "updatedAt": j.get("updatedAt") or 0,
+        }
+        row.update(session_stats(sid))
+        out.append(row)
+    return out
+
+
+# --- account-usage estimation (ccusage-style) ---------------------------------
+# Incrementally tails every transcript, bucketing costly tokens (input +
+# cache-creation + output; cache reads excluded) per hour. Reported as rolling
+# 5h/7d sums plus the busiest 5h window of the week for self-calibrated bars.
+
+_usage_files = {}    # path -> [resume_offset]
+_usage_buckets = {}  # epoch-hour -> tokens
+_usage_last = 0.0
+
+
+def _bucket_add(ts, tokens):
+    try:
+        eh = calendar.timegm((int(ts[0:4]), int(ts[5:7]), int(ts[8:10]),
+                              int(ts[11:13]), 0, 0)) // 3600
+    except Exception:
+        return
+    _usage_buckets[eh] = _usage_buckets.get(eh, 0) + tokens
+
+
+def _tail_parse(f):
+    offset = f.tell()
+    while True:
+        line = f.readline()
+        if not line:
+            break
+        if not line.endswith(b"\n"):
+            break  # partially written line; resume here next round
+        offset = f.tell()
+        if b'"usage"' not in line or b'"assistant"' not in line:
+            continue
+        try:
+            j = json.loads(line)
+        except Exception:
+            continue
+        if j.get("type") != "assistant":
+            continue
+        u = (j.get("message") or {}).get("usage") or {}
+        tokens = (u.get("input_tokens") or 0) + (u.get("cache_creation_input_tokens") or 0) \
+            + (u.get("output_tokens") or 0)
+        if tokens:
+            _bucket_add(j.get("timestamp") or "", tokens)
+    return offset
+
+
+def usage_windows():
+    global _usage_last
+    now = time.time()
+    if now - _usage_last >= 60 or not _usage_buckets:
+        _usage_last = now
+        cutoff = now - 8 * 86400
+        for path in glob.glob(os.path.expanduser("~/.claude/projects/*/*.jsonl")):
+            try:
+                stt = os.stat(path)
+            except Exception:
+                continue
+            if stt.st_mtime < cutoff:
+                continue
+            rec = _usage_files.get(path)
+            start = rec[0] if rec and stt.st_size >= rec[0] else 0
+            if start == stt.st_size:
+                continue
+            try:
+                with open(path, "rb") as f:
+                    f.seek(start)
+                    _usage_files[path] = [_tail_parse(f)]
+            except Exception:
+                continue
+        floor = int(now // 3600) - 8 * 24
+        for k in [k for k in _usage_buckets if k < floor]:
+            del _usage_buckets[k]
+    nh = int(now // 3600)
+    h5 = sum(v for k, v in _usage_buckets.items() if k > nh - 5)
+    d7 = sum(v for k, v in _usage_buckets.items() if k > nh - 168)
+    peak = 0
+    for s in range(nh - 168, nh + 1):
+        w = sum(_usage_buckets.get(k, 0) for k in range(s, s + 5))
+        if w > peak:
+            peak = w
+    return {"h5": h5, "d7": d7, "h5_peak": peak}
+
+
+def main():
+    if os.environ.get("AGENT_HUD_ONESHOT"):
+        print(json.dumps({"host": HOST, "sessions": snapshot(), "usage": usage_windows()}, indent=1))
+        return
+    while True:
+        body = json.dumps({"host": HOST, "sessions": snapshot(), "usage": usage_windows()}).encode()
+        try:
+            req = urllib.request.Request(
+                URL + "/sessions", data=body,
+                headers={"Content-Type": "application/json"},
+            )
+            urllib.request.urlopen(req, timeout=3).read()
+        except Exception:
+            pass
+        time.sleep(INTERVAL)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,28 @@
+#!/bin/sh
+# Agent HUD tunnel keeper. Runs under launchd (KeepAlive) so reverse tunnels
+# to your remote boxes survive closed terminals, dead sessions, and reboots.
+# Every minute: probe each box through the tunnel; open one only where none
+# exists (a user SSH session holding the forward passes the probe, so this
+# never fights it).
+#
+# Boxes are listed in ~/agent-hud/hosts.conf (one IP/host per line, plain
+# hosts only — the file is gitignored so your infrastructure stays private).
+
+CONF="$HOME/agent-hud/hosts.conf"
+
+trap 'kill 0' EXIT INT TERM
+
+while true; do
+    if [ -f "$CONF" ]; then
+        while IFS= read -r h; do
+            case "$h" in ""|\#*|*\**) continue ;; esac
+            if ! ssh -o BatchMode=yes -o ConnectTimeout=8 -o PermitLocalCommand=no \
+                     -o ClearAllForwardings=yes "$h" \
+                     'curl -s -m 2 http://127.0.0.1:48085/health >/dev/null 2>&1' 2>/dev/null; then
+                ssh -o BatchMode=yes -o ConnectTimeout=10 -o ExitOnForwardFailure=yes \
+                    -o PermitLocalCommand=no -N -R 48085:127.0.0.1:48085 "$h" >/dev/null 2>&1 &
+            fi
+        done < "$CONF"
+    fi
+    sleep 60
+done

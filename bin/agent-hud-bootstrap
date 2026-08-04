@@ -1,0 +1,63 @@
+#!/bin/sh
+# Auto-provision Agent HUD on a dev box. Invoked by ssh's LocalCommand on
+# every connection (backgrounded), or manually: agent-hud-bootstrap <ip>.
+# Fast path: if the box's registry reporter is alive, exit immediately.
+# Otherwise deploy scripts, install Claude hooks, start the reporter, and
+# record a short display alias (last IP octet) in ~/agent-hud/hosts.json.
+
+HOST="$1"
+[ -n "$HOST" ] || exit 0
+
+# Only provision hosts matching a line in ~/agent-hud/hosts.conf
+# (plain hosts or shell patterns like 10.0.0.*; file is gitignored).
+CONF="$HOME/agent-hud/hosts.conf"
+[ -f "$CONF" ] || exit 0
+MATCHED=0
+while IFS= read -r pat; do
+    case "$pat" in ""|\#*) continue ;; esac
+    case "$HOST" in
+        $pat) MATCHED=1; break ;;
+    esac
+done < "$CONF"
+[ "$MATCHED" = "1" ] || exit 0
+
+BIN="$HOME/agent-hud/bin"
+LOG="$HOME/agent-hud/bootstrap.log"
+LOCK="/tmp/agent-hud-bootstrap-$HOST.lock"
+mkdir "$LOCK" 2>/dev/null || exit 0
+trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+
+# PermitLocalCommand=no prevents recursion; ClearAllForwardings avoids
+# fighting over the reverse-tunnel port.
+SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=8 -o PermitLocalCommand=no -o ClearAllForwardings=yes"
+
+if ssh $SSH_OPTS "$HOST" 'pgrep -f "[a]gent-hud-registry" >/dev/null 2>&1' 2>/dev/null; then
+    exit 0
+fi
+
+{
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] bootstrapping $HOST"
+    ssh $SSH_OPTS "$HOST" 'mkdir -p ~/agent-hud/bin' || exit 0
+    scp $SSH_OPTS -q "$BIN/agent-hud-send" "$BIN/agent-hud-payload.py" \
+        "$BIN/install-hooks.py" "$BIN/agent-hud-registry" "$HOST:agent-hud/bin/"
+    ssh $SSH_OPTS "$HOST" 'chmod +x ~/agent-hud/bin/* && python3 ~/agent-hud/bin/install-hooks.py ~/agent-hud/bin/agent-hud-send'
+    ssh $SSH_OPTS "$HOST" 'nohup ./agent-hud/bin/agent-hud-registry </dev/null >/dev/null 2>&1 &'
+
+    HN="$(ssh $SSH_OPTS "$HOST" 'hostname -s' 2>/dev/null | tr -d '\r\n')"
+    OCT="${HOST##*.}"
+    if [ -n "$HN" ]; then
+        python3 - "$HN" ".$OCT" <<'PY'
+import json, os, sys
+p = os.path.expanduser("~/agent-hud/hosts.json")
+try:
+    m = json.load(open(p))
+except Exception:
+    m = {}
+m[sys.argv[1]] = sys.argv[2]
+with open(p, "w") as f:
+    json.dump(m, f, indent=1)
+PY
+        echo "  alias: $HN -> .$OCT"
+    fi
+    echo "  done"
+} >>"$LOG" 2>&1
