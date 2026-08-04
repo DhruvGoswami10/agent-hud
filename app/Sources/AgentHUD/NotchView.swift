@@ -164,16 +164,31 @@ private struct PeekView: View {
                 Spacer(minLength: 0)
                 if let img = e.image { Thumb(image: img, side: 54) }
             case .clipboard(let c):
-                IconBadge(symbol: c.kind == .image ? "photo" : (c.kind == .file ? "doc" : "doc.on.clipboard"),
-                          color: Color(white: 0.85))
-                if let img = c.image { Thumb(image: img, side: 56) }
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("COPIED")
-                        .font(.system(size: 8.5, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.4))
-                        .kerning(0.8)
-                    if !c.text.isEmpty {
-                        Text(c.text).font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.85)).lineLimit(2)
+                if let img = c.image {
+                    // Image copies are image-forward: the preview is the hero.
+                    PreviewThumb(image: img)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("COPIED")
+                            .font(.system(size: 8.5, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.4))
+                            .kerning(0.8)
+                        if !c.text.isEmpty {
+                            Text(c.text)
+                                .font(.system(size: 11, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.6))
+                        }
+                    }
+                } else {
+                    IconBadge(symbol: c.kind == .file ? "doc" : "doc.on.clipboard",
+                              color: Color(white: 0.85))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("COPIED")
+                            .font(.system(size: 8.5, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.4))
+                            .kerning(0.8)
+                        if !c.text.isEmpty {
+                            Text(c.text).font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.85)).lineLimit(2)
+                        }
                     }
                 }
                 Spacer(minLength: 0)
@@ -250,6 +265,21 @@ private struct Thumb: View {
             .resizable()
             .aspectRatio(contentMode: .fill)
             .frame(width: side, height: side)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.15), lineWidth: 1))
+    }
+}
+
+/// Aspect-preserving preview for screenshots and arbitrary images — wide
+/// captures render as a mini banner instead of a center-cropped square.
+private struct PreviewThumb: View {
+    let image: NSImage
+
+    var body: some View {
+        Image(nsImage: image)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(maxWidth: 130, maxHeight: 58)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.15), lineWidth: 1))
     }

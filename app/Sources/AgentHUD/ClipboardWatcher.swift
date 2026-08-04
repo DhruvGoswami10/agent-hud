@@ -31,7 +31,11 @@ final class ClipboardWatcher {
 
     private static func read(_ pb: NSPasteboard) -> ClipboardItem? {
         if let d = pb.data(forType: .png) ?? pb.data(forType: .tiff), let img = NSImage(data: d) {
-            return ClipboardItem(kind: .image, text: "", image: img.hudThumbnail(maxDim: 320))
+            var dims = ""
+            if let rep = NSBitmapImageRep(data: d) {
+                dims = "\(rep.pixelsWide)×\(rep.pixelsHigh)"
+            }
+            return ClipboardItem(kind: .image, text: dims, image: img.hudThumbnail(maxDim: 320))
         }
         if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
            !urls.isEmpty {
