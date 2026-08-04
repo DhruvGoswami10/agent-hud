@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import CoreImage
 
 /// Prefer the session's real name; if it's still Claude Code's auto-generated
 /// "<user>-<xx>" fallback, show the project folder instead when that's more
@@ -158,6 +159,21 @@ enum HUDState {
 }
 
 extension NSImage {
+    /// Dominant/average color, for Dynamic-Island-style ambient glows.
+    var averageColor: NSColor? {
+        guard let tiff = tiffRepresentation, let ci = CIImage(data: tiff) else { return nil }
+        guard let filter = CIFilter(name: "CIAreaAverage", parameters: [
+            kCIInputImageKey: ci,
+            kCIInputExtentKey: CIVector(cgRect: ci.extent),
+        ]), let out = filter.outputImage else { return nil }
+        var px = [UInt8](repeating: 0, count: 4)
+        let ctx = CIContext(options: [.workingColorSpace: NSNull()])
+        ctx.render(out, toBitmap: &px, rowBytes: 4,
+                   bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBA8, colorSpace: nil)
+        return NSColor(red: CGFloat(px[0]) / 255, green: CGFloat(px[1]) / 255,
+                       blue: CGFloat(px[2]) / 255, alpha: 1)
+    }
+
     func hudThumbnail(maxDim: CGFloat) -> NSImage {
         let s = size
         guard s.width > 0, s.height > 0 else { return self }

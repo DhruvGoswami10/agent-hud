@@ -27,7 +27,7 @@ final class CommandQueue {
 final class EventServer {
     private let port: UInt16
     private let onEvent: (AgentEvent) -> Void
-    private let onSessions: (String, [LocalSessionEntry], [String: Int]) -> Void
+    private let onSessions: (String, [LocalSessionEntry], [String: Int], [Int: Int]) -> Void
     private let onMusicState: (NowPlaying) -> Void
     let musicCommands = CommandQueue()
     private var listener: NWListener?
@@ -38,7 +38,7 @@ final class EventServer {
 
     init(port: UInt16,
          onEvent: @escaping (AgentEvent) -> Void,
-         onSessions: @escaping (String, [LocalSessionEntry], [String: Int]) -> Void,
+         onSessions: @escaping (String, [LocalSessionEntry], [String: Int], [Int: Int]) -> Void,
          onMusicState: @escaping (NowPlaying) -> Void) {
         self.port = port
         self.onEvent = onEvent
@@ -148,8 +148,14 @@ final class EventServer {
                     outcome: (j["outcome"] as? String) ?? ""
                 )
             }
-            let usage = (obj["usage"] as? [String: Int]) ?? [:]
-            onSessions(host, entries, usage)
+            let usageObj = (obj["usage"] as? [String: Any]) ?? [:]
+            var usage: [String: Int] = [:]
+            for key in ["h5", "d7", "h5_peak"] { usage[key] = (usageObj[key] as? Int) ?? 0 }
+            var hours: [Int: Int] = [:]
+            if let hs = usageObj["hours"] as? [String: Int] {
+                for (k, v) in hs { if let hk = Int(k) { hours[hk] = v } }
+            }
+            onSessions(host, entries, usage, hours)
             respond(conn, status: "200 OK", body: #"{"ok":true,"sessions":\#(entries.count)}"#)
         case ("GET", "/health"):
             lock.lock(); let n = received; let m = musicReceived; lock.unlock()

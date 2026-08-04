@@ -25,7 +25,8 @@ struct NotchRootView: View {
                 case .collapsed:
                     CollapsedStrip(state: state, metrics: metrics)
                 case .peek(let content):
-                    PeekView(content: content, art: state.nowPlayingArt)
+                    PeekView(content: content, art: state.nowPlayingArt,
+                             artColor: state.nowPlayingArtColor.map(Color.init(nsColor:)))
                         .padding(.top, metrics.notchHeight)
                         .opacity(showContent ? 1 : 0)
                 case .open:
@@ -134,6 +135,16 @@ private struct CollapsedStrip: View {
 private struct PeekView: View {
     let content: PeekContent
     var art: NSImage?
+    var artColor: Color?
+
+    /// Dynamic-Island-style ambient glow color for this peek.
+    private var glow: Color {
+        switch content {
+        case .event(let e): return e.kind.color
+        case .clipboard: return Color(white: 0.75)
+        case .music: return artColor ?? Color(red: 1, green: 0.45, blue: 0.6)
+        }
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -186,6 +197,20 @@ private struct PeekView: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(alignment: .leading) {
+            Circle()
+                .fill(glow.opacity(0.45))
+                .frame(width: 110, height: 110)
+                .blur(radius: 42)
+                .offset(x: -14)
+        }
+        .background(alignment: .trailing) {
+            Circle()
+                .fill(glow.opacity(0.2))
+                .frame(width: 90, height: 90)
+                .blur(radius: 46)
+                .offset(x: 18)
+        }
     }
 }
 
@@ -232,6 +257,12 @@ private struct Thumb: View {
 
 // MARK: - Open panel (console)
 
+/// Soft gradient surface for cards — flat fills read cheap, gradients read DI.
+private let hudCard = LinearGradient(
+    colors: [Color.white.opacity(0.085), Color.white.opacity(0.04)],
+    startPoint: .top, endPoint: .bottom
+)
+
 private func kFmt(_ n: Int) -> String {
     if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
     if n >= 1000 { return "\(n / 1000)k" }
@@ -257,7 +288,7 @@ private struct OpenPanel: View {
                     .frame(width: 236)
             }
             .frame(maxHeight: .infinity)
-            PulseView(state: state)
+            BurnStrip(state: state)
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 12)
@@ -350,7 +381,7 @@ private struct OpenPanel: View {
             musicButton("forward.fill", size: 10) { state.musicControl("next") }
         }
         .padding(8)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.white.opacity(0.055)))
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hudCard))
     }
 
     private func musicButton(_ symbol: String, size: CGFloat, action: @escaping () -> Void) -> some View {
@@ -413,7 +444,7 @@ private struct MetersRow: View {
                     .kerning(0.6)
             }
             .padding(9)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.white.opacity(0.05)))
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hudCard))
             .help("Estimated tokens (input + cache-write + output) from all transcripts; 5h bar is relative to your busiest 5-hour window this week")
         }
     }
@@ -432,7 +463,7 @@ private struct MetersRow: View {
             }
             .frame(height: 4)
             Text(kFmt(value))
-                .font(.system(size: 9.5, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
+                .font(.system(size: 9.5, weight: .semibold, design: .rounded)).foregroundStyle(.white.opacity(0.85))
                 .frame(width: 44, alignment: .trailing)
         }
     }
@@ -474,7 +505,7 @@ private struct SessionCard: View {
                         .font(.system(size: 8.5)).foregroundStyle(.white.opacity(0.4))
                     if let f = session.ctxFraction {
                         Text("\(Int(f * 100))%")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
                             .foregroundStyle(f > 0.8 ? EventKind.attention.color : .white.opacity(0.85))
                     }
                 }
@@ -484,10 +515,15 @@ private struct SessionCard: View {
         .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(selected
-                      ? Color.white.opacity(0.12)
-                      : (session.kind == .attention ? EventKind.attention.color.opacity(0.13) : Color.white.opacity(0.05)))
+            Group {
+                if selected {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(0.12))
+                } else if session.kind == .attention {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous).fill(EventKind.attention.color.opacity(0.13))
+                } else {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hudCard)
+                }
+            }
         )
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
@@ -534,7 +570,7 @@ private struct DetailPane: View {
                             Text("Context").font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
                             Spacer()
                             Text("\(kFmt(s.ctxUsed)) / \(kFmt(s.effectiveCtxLimit))")
-                                .font(.system(size: 10, weight: .semibold)).foregroundStyle(.white)
+                                .font(.system(size: 10, weight: .semibold, design: .rounded)).foregroundStyle(.white)
                         }
                         GeometryReader { geo in
                             ZStack(alignment: .leading) {
@@ -557,11 +593,13 @@ private struct DetailPane: View {
                     HStack(spacing: 18) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Input").font(.system(size: 9)).foregroundStyle(.white.opacity(0.4))
-                            Text(kFmt(s.lastIn)).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                            Text(kFmt(s.lastIn))
+                                .font(.system(size: 13, weight: .semibold, design: .rounded)).foregroundStyle(.white)
                         }
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Output").font(.system(size: 9)).foregroundStyle(.white.opacity(0.4))
-                            Text(kFmt(s.lastOut)).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                            Text(kFmt(s.lastOut))
+                                .font(.system(size: 13, weight: .semibold, design: .rounded)).foregroundStyle(.white)
                         }
                     }
                 }
@@ -582,7 +620,7 @@ private struct DetailPane: View {
         }
         .padding(11)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(0.045)))
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(hudCard))
     }
 }
 
@@ -592,52 +630,38 @@ private extension Circle {
     }
 }
 
-private struct PulseView: View {
+/// Token burn per hour, last 48h, all machines summed — a heat strip fed by
+/// the same real usage data as the meters. Replaces the old decorative pulse.
+private struct BurnStrip: View {
     @ObservedObject var state: AppState
 
     var body: some View {
-        let rows = Array(state.sessions.prefix(3))
-        if !rows.isEmpty {
+        let cells = state.burnCells
+        let maxV = max(cells.map(\.tokens).max() ?? 0, 1)
+        if cells.contains(where: { $0.tokens > 0 }) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text("AGENT PULSE · LAST 90M")
+                    Text("BURN · LAST 48H")
                         .font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.35)).kerning(0.8)
                     Spacer()
-                    legendDot(EventKind.running.color, "working")
-                    legendDot(EventKind.attention.color, "waiting")
+                    Text("peak \(kFmt(maxV))/h")
+                        .font(.system(size: 9, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.45))
                 }
-                ForEach(rows) { s in
-                    HStack(spacing: 8) {
-                        Text(sessionDisplayName(s.sessionName, project: s.project))
-                            .font(.system(size: 8.5)).foregroundStyle(.white.opacity(0.5))
-                            .frame(width: 82, alignment: .leading).lineLimit(1)
-                        HStack(spacing: 2) {
-                            ForEach(0..<48, id: \.self) { i in
+                HStack(spacing: 2) {
+                    ForEach(cells, id: \.hour) { c in
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(.white.opacity(0.06))
+                            .overlay(
                                 RoundedRectangle(cornerRadius: 2)
-                                    .fill(bucketColor(state.pulse[s.id], i))
-                                    .frame(height: 5)
-                                    .frame(maxWidth: .infinity)
-                            }
-                        }
+                                    .fill(EventKind.running.color.opacity(
+                                        c.tokens == 0 ? 0 : 0.25 + 0.75 * Double(c.tokens) / Double(maxV)))
+                            )
+                            .frame(height: 10)
+                            .frame(maxWidth: .infinity)
                     }
                 }
             }
-        }
-    }
-
-    private func bucketColor(_ buf: [Int]?, _ i: Int) -> Color {
-        let v = (buf?.indices.contains(i) == true) ? buf![i] : 0
-        switch v {
-        case 2: return EventKind.attention.color
-        case 1: return EventKind.running.color
-        default: return .white.opacity(0.08)
-        }
-    }
-
-    private func legendDot(_ c: Color, _ label: String) -> some View {
-        HStack(spacing: 3) {
-            RoundedRectangle(cornerRadius: 2).fill(c).frame(width: 8, height: 5)
-            Text(label).font(.system(size: 8.5)).foregroundStyle(.white.opacity(0.4))
         }
     }
 }

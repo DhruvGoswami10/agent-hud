@@ -7,7 +7,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var musicWatcher: MusicWatcher!
     private var registryReporter: Process?
     private var aliasTimer: Timer?
-    private var pulseTimer: Timer?
     private var notchController: NotchWindowController!
     private var statusItemController: StatusItemController!
 
@@ -26,13 +25,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         aliasTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { _ in
             Task { @MainActor in HostAliases.reload() }
         }
-        pulseTimer = Timer.scheduledTimer(withTimeInterval: 112, repeats: true) { _ in
-            Task { @MainActor in state.samplePulse() }
-        }
         server = EventServer(port: 48085, onEvent: { event in
             Task { @MainActor in state.apply(event) }
-        }, onSessions: { host, entries, usage in
-            Task { @MainActor in state.syncRegistry(host: host, entries: entries, usage: usage) }
+        }, onSessions: { host, entries, usage, hours in
+            Task { @MainActor in state.syncRegistry(host: host, entries: entries, usage: usage, hours: hours) }
         }, onMusicState: { np in
             Task { @MainActor in state.setWebNowPlaying(np) }
         })

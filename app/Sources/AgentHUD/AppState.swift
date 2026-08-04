@@ -37,12 +37,12 @@ final class AppState: ObservableObject {
 
     @Published private(set) var nowPlaying: NowPlaying?
     @Published private(set) var nowPlayingArt: NSImage?
+    @Published private(set) var nowPlayingArtColor: NSColor?
 
     /// Set by NotchWindowController; resizes the panel window for a target state.
     var frameUpdater: ((HUDState) -> Void)?
 
     @Published var selectedSessionId: String?
-    @Published private(set) var pulse: [String: [Int]] = [:]  // 48 buckets × ~2min
 
     var selectedSession: SessionInfo? {
         if let id = selectedSessionId, let s = sessions.first(where: { $0.id == id }) { return s }
@@ -55,15 +55,6 @@ final class AppState: ObservableObject {
 
     enum Host {
         static let local = String(ProcessInfo.processInfo.hostName.split(separator: ".").first ?? "mac")
-    }
-
-    func samplePulse() {
-        for s in sessions {
-            var buf = pulse[s.id] ?? Array(repeating: 0, count: 48)
-            buf.removeFirst()
-            buf.append(s.kind == .attention ? 2 : (s.kind == .running ? 1 : 0))
-            pulse[s.id] = buf
-        }
     }
 
     func focusTerminal() {
@@ -177,15 +168,25 @@ final class AppState: ObservableObject {
     private var registryActive: [String: Set<String>] = [:]
 
     @Published private(set) var hostUsage: [String: [String: Int]] = [:]
+    @Published private(set) var hostHours: [String: [Int: Int]] = [:]
     private var latestEntries: [String: LocalSessionEntry] = [:]
     private var pendingFinish: [String: Task<Void, Never>] = [:]
+
+    /// Token burn per hour across all machines, last 48 cells oldest→newest.
+    var burnCells: [(hour: Int, tokens: Int)] {
+        let nh = Int(Date().timeIntervalSince1970) / 3600
+        return ((nh - 47)...nh).map { h in
+            (h, hostHours.values.reduce(0) { $0 + ($1[h] ?? 0) })
+        }
+    }
 
     var estH5: Int { hostUsage.values.reduce(0) { $0 + ($1["h5"] ?? 0) } }
     var estD7: Int { hostUsage.values.reduce(0) { $0 + ($1["d7"] ?? 0) } }
     var estPeak: Int { hostUsage.values.reduce(0) { $0 + ($1["h5_peak"] ?? 0) } }
 
-    func syncRegistry(host: String, entries: [LocalSessionEntry], usage: [String: Int] = [:]) {
+    func syncRegistry(host: String, entries: [LocalSessionEntry], usage: [String: Int] = [:], hours: [Int: Int] = [:]) {
         if !usage.isEmpty { hostUsage[host] = usage }
+        if !hours.isEmpty { hostHours[host] = hours }
         let primed = registryActive[host] != nil
         let last = registryActive[host] ?? []
         let present = Set(entries.map(\.sessionId))
@@ -348,12 +349,17 @@ final class AppState: ObservableObject {
         }
         guard np.title != oldTitle else { return }
         nowPlayingArt = nil
+        nowPlayingArtColor = nil
         if !np.artworkURL.isEmpty, let url = URL(string: np.artworkURL) {
             URLSession.shared.dataTask(with: url) { data, _, _ in
                 guard let data, let img = NSImage(data: data) else { return }
                 let thumb = img.hudThumbnail(maxDim: 240)
+                let avg = thumb.averageColor
                 DispatchQueue.main.async {
-                    MainActor.assumeIsolated { self.nowPlayingArt = thumb }
+                    MainActor.assumeIsolated {
+                        self.nowPlayingArt = thumb
+                        self.nowPlayingArtColor = avg
+                    }
                 }
             }.resume()
         }

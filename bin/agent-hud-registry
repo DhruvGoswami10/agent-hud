@@ -247,7 +247,8 @@ def usage_windows():
         w = sum(_usage_buckets.get(k, 0) for k in range(s, s + 5))
         if w > peak:
             peak = w
-    return {"h5": h5, "d7": d7, "h5_peak": peak}
+    hours = {str(k): v for k, v in _usage_buckets.items() if k > nh - 48}
+    return {"h5": h5, "d7": d7, "h5_peak": peak, "hours": hours}
 
 
 def main():
