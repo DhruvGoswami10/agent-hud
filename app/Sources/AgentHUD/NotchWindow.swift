@@ -88,7 +88,8 @@ final class NotchWindowController {
     fileprivate func pollMouse() {
         guard let screen = Self.targetScreen() else { return }
         let sz = Self.contentSize(for: state.hudState, metrics: metrics,
-                                  aggregate: state.aggregate, sideBars: state.sideBars)
+                                  aggregate: state.aggregate, sideBars: state.sideBars,
+                                  peekPreview: state.peekPreviewSize)
         let rect = NSRect(x: screen.frame.midX - sz.width / 2 - 4,
                           y: screen.frame.maxY - sz.height - 4,
                           width: sz.width + 8,
@@ -102,7 +103,8 @@ final class NotchWindowController {
     }
 
     static func contentSize(for target: HUDState, metrics m: Metrics,
-                            aggregate: EventKind, sideBars: Bool) -> NSSize {
+                            aggregate: EventKind, sideBars: Bool,
+                            peekPreview: CGSize? = nil) -> NSSize {
         switch target {
         case .collapsed:
             guard m.hasNotch else { return NSSize(width: 210, height: 30) }
@@ -111,7 +113,14 @@ final class NotchWindowController {
                 ? NSSize(width: m.notchWidth + 16, height: m.notchHeight)
                 : NSSize(width: m.notchWidth, height: m.notchHeight + 4)
         case .peek:
-            return NSSize(width: max(m.notchWidth + 240, 470), height: m.hasNotch ? m.notchHeight + 80 : 90)
+            var w = max(m.notchWidth + 240, 470)
+            var h = m.hasNotch ? m.notchHeight + 80 : 90
+            if let p = peekPreview {
+                // Island morphs to the copied image's shape.
+                w = max(m.notchWidth + 40, min(720, p.width + 250))
+                h = max(h, (m.hasNotch ? m.notchHeight : 12) + p.height + 26)
+            }
+            return NSSize(width: w, height: h)
         case .open:
             return NSSize(width: 760, height: 520)
         }

@@ -167,6 +167,14 @@ enum HUDState {
     }
 }
 
+/// Fit `size` inside `box` preserving aspect ratio, never upscaling —
+/// small snips stay small, wide strips go wide, tall crops go tall.
+func hudFitSize(_ size: CGSize, in box: CGSize) -> CGSize {
+    guard size.width > 0, size.height > 0 else { return CGSize(width: 56, height: 56) }
+    let scale = min(box.width / size.width, box.height / size.height, 1)
+    return CGSize(width: max(40, size.width * scale), height: max(28, size.height * scale))
+}
+
 extension NSImage {
     /// Dominant/average color, for Dynamic-Island-style ambient glows.
     var averageColor: NSColor? {

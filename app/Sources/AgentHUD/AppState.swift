@@ -44,6 +44,14 @@ final class AppState: ObservableObject {
 
     @Published var selectedSessionId: String?
 
+    /// When the peek shows a copied image, the island morphs to its shape.
+    var peekPreviewSize: CGSize? {
+        if case .peek(.clipboard(let c)) = hudState, let img = c.image {
+            return hudFitSize(img.size, in: CGSize(width: 210, height: 130))
+        }
+        return nil
+    }
+
     var selectedSession: SessionInfo? {
         if let id = selectedSessionId, let s = sessions.first(where: { $0.id == id }) { return s }
         return sessions.first

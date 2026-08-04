@@ -11,7 +11,8 @@ struct NotchRootView: View {
 
     var body: some View {
         let sz = NotchWindowController.contentSize(for: state.hudState, metrics: metrics,
-                                                   aggregate: state.aggregate, sideBars: state.sideBars)
+                                                   aggregate: state.aggregate, sideBars: state.sideBars,
+                                                   peekPreview: state.peekPreviewSize)
         ZStack(alignment: .top) {
             NotchShape(topRadius: topRadius, bottomRadius: bottomRadius)
                 .fill(.black)
@@ -270,16 +271,16 @@ private struct Thumb: View {
     }
 }
 
-/// Aspect-preserving preview for screenshots and arbitrary images — wide
-/// captures render as a mini banner instead of a center-cropped square.
+/// Aspect-true preview for screenshots and arbitrary images — sized by the
+/// same fit math that shapes the island, so the panel morphs to the snip.
 private struct PreviewThumb: View {
     let image: NSImage
 
     var body: some View {
+        let s = hudFitSize(image.size, in: CGSize(width: 210, height: 130))
         Image(nsImage: image)
             .resizable()
-            .aspectRatio(contentMode: .fit)
-            .frame(maxWidth: 130, maxHeight: 58)
+            .frame(width: s.width, height: s.height)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.15), lineWidth: 1))
     }
