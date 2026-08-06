@@ -361,7 +361,7 @@ private struct OpenPanel: View {
         HStack(spacing: 4) {
             Image(systemName: state.awakeActive ? "cup.and.saucer.fill" : "cup.and.saucer")
                 .font(.system(size: 10))
-            Text(state.awakeActive ? (state.keepAwake ? "awake · manual" : "awake · agents") : "sleep ok")
+            Text(state.awakeActive ? "awake · \(state.awakeReason)" : "sleep ok")
                 .font(.system(size: 9, weight: .medium))
         }
         .foregroundStyle(state.awakeActive ? Color(red: 1, green: 0.76, blue: 0.35) : .white.opacity(0.4))
@@ -371,9 +371,9 @@ private struct OpenPanel: View {
         .contentShape(Capsule())
         .onTapGesture { state.keepAwake.toggle() }
         .help(state.keepAwake
-              ? "Keeping Mac awake indefinitely — click to release"
-              : (state.awakeActive ? "Auto-awake: agents are working (click to hold indefinitely)"
-                                   : "Click to keep Mac awake indefinitely"))
+              ? "Screen stays on and unlocked (grant Accessibility for the no-lock part) — click to release. Lid closed on battery still sleeps: that's macOS, not us."
+              : (state.awakeActive ? "Auto-awake: \(state.awakeReason) — click to hold the screen on indefinitely"
+                                   : "Click to keep the screen on and unlocked indefinitely"))
     }
 
     private var scopeLine: String {

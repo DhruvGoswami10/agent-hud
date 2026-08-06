@@ -81,6 +81,10 @@ final class AppState: ObservableObject {
         let obj: [String: Any] = [
             "events": evs, "sessions": sess,
             "muted": muted, "banners": systemNotifications, "sounds": sounds,
+            "awake": ["reason": awakeReason, "active": awakeActive,
+                      "assertionAlive": Caffeine.shared.assertionAlive,
+                      "jiggleAuthorized": Caffeine.shared.jiggleAuthorized],
+            "hostLastReport": hostLastReport.mapValues { "\(Int(Date().timeIntervalSince($0)))s ago" },
         ]
         let data = (try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted])) ?? Data("{}".utf8)
         return String(decoding: data, as: UTF8.self)
@@ -177,11 +181,44 @@ final class AppState: ObservableObject {
     }
 
     @Published private(set) var awakeActive = false
+    @Published private(set) var awakeReason = ""
+    var lastBusyAt: Date?  // internal for tests
+
+    /// Auto mode keeps the system up for a while after the last agent goes
+    /// quiet, so reverse tunnels survive gaps between bursty overnight runs.
+    /// Once the Mac sleeps, no remote event can ever wake it — auto-awake can
+    /// extend wakefulness but never restore it.
+    nonisolated static let autoLinger: TimeInterval = 600
+
+    /// Pure policy: which hold do we want right now?
+    /// Attention counts as busy — an agent waiting for approval is exactly
+    /// when reachability matters most.
+    nonisolated static func desiredHold(keepAwake: Bool, autoAwake: Bool,
+                                        running: Int, attention: Int,
+                                        lastBusyAge: TimeInterval?) -> Caffeine.Mode {
+        if keepAwake { return .display }
+        guard autoAwake else { return .off }
+        if running > 0 || attention > 0 { return .system }
+        if let age = lastBusyAge, age < autoLinger { return .system }
+        return .off
+    }
 
     func updateCaffeine() {
-        let on = keepAwake || (autoAwake && runningCount > 0)
-        if on != awakeActive { awakeActive = on }
-        Caffeine.shared.set(on: on, displayAwake: keepAwake)
+        let now = Date()
+        if runningCount > 0 || attentionCount > 0 { lastBusyAt = now }
+        let mode = Self.desiredHold(keepAwake: keepAwake, autoAwake: autoAwake,
+                                    running: runningCount, attention: attentionCount,
+                                    lastBusyAge: lastBusyAt.map { now.timeIntervalSince($0) })
+        let alive = Caffeine.shared.set(mode: mode)
+        let active = alive && mode != .off
+        if active != awakeActive { awakeActive = active }
+        let reason: String
+        switch mode {
+        case .off: reason = ""
+        case .display: reason = "manual"
+        case .system: reason = (runningCount > 0 || attentionCount > 0) ? "agents" : "cooldown"
+        }
+        if reason != awakeReason { awakeReason = reason }
     }
 
     private func upsertSession(_ e: AgentEvent) {
@@ -223,8 +260,37 @@ final class AppState: ObservableObject {
 
     @Published private(set) var hostUsage: [String: [String: Int]] = [:]
     @Published private(set) var hostHours: [String: [Int: Int]] = [:]
+    var hostLastReport: [String: Date] = [:]  // internal for tests
     private var latestEntries: [String: LocalSessionEntry] = [:]
     private var pendingFinish: [String: Task<Void, Never>] = [:]
+
+    /// A host reporting every ~5s that goes silent this long has lost its
+    /// tunnel or reporter; its "running" sessions are frozen ghosts.
+    static let hostSilenceCutoff: TimeInterval = 90
+
+    /// Periodic self-healing: demote sessions from silent hosts (a dead
+    /// tunnel must not hold the Mac awake all night), prune old finishes,
+    /// and re-arm/retry the power assertion. Runs on a timer and on wake.
+    func maintenanceSweep(now: Date = Date()) {
+        var mutated = false
+        for i in sessions.indices {
+            guard sessions[i].kind == .running || sessions[i].kind == .attention else { continue }
+            guard let seen = hostLastReport[sessions[i].host],
+                  now.timeIntervalSince(seen) > Self.hostSilenceCutoff else { continue }
+            if sessions[i].kind == .attention { pendingAttention = max(0, pendingAttention - 1) }
+            sessions[i].kind = .done
+            sessions[i].message = "lost contact"
+            sessions[i].updated = now
+            mutated = true
+        }
+        let before = sessions.count
+        sessions.removeAll { $0.kind == .done && now.timeIntervalSince($0.updated) > 1800 }
+        if mutated || sessions.count != before {
+            refreshCollapsedFrame()
+        } else {
+            updateCaffeine()
+        }
+    }
 
     /// Token burn per hour across all machines, last 48 cells oldest→newest.
     var burnCells: [(hour: Int, tokens: Int)] {
@@ -239,6 +305,7 @@ final class AppState: ObservableObject {
     var estPeak: Int { hostUsage.values.reduce(0) { $0 + ($1["h5_peak"] ?? 0) } }
 
     func syncRegistry(host: String, entries: [LocalSessionEntry], usage: [String: Int] = [:], hours: [Int: Int] = [:]) {
+        hostLastReport[host] = Date()
         if !usage.isEmpty { hostUsage[host] = usage }
         if !hours.isEmpty { hostHours[host] = hours }
         let primed = registryActive[host] != nil

@@ -7,6 +7,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var musicWatcher: MusicWatcher!
     private var registryReporter: Process?
     private var aliasTimer: Timer?
+    private var sweepTimer: Timer?
+    private var terminating = false
     private var notchController: NotchWindowController!
     private var statusItemController: StatusItemController!
 
@@ -24,6 +26,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         HostAliases.reload()
         aliasTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { _ in
             Task { @MainActor in HostAliases.reload() }
+        }
+        sweepTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
+            Task { @MainActor in state.maintenanceSweep() }
+        }
+        // Converge fast after sleep: demote ghosts, re-arm the assertion.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { _ in
+            Task { @MainActor in state.maintenanceSweep() }
         }
         server = EventServer(port: 48085, onEvent: { event in
             Task { @MainActor in state.apply(event) }
@@ -43,6 +54,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        terminating = true
+        registryReporter?.terminationHandler = nil
         registryReporter?.terminate()
         server?.stop()
     }
@@ -67,6 +80,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         p.standardInput = FileHandle.nullDevice
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
+        p.terminationHandler = { [weak self] _ in
+            // A dead reporter silently freezes local sessions; relaunch it.
+            Task { @MainActor in
+                guard let self, !self.terminating else { return }
+                NSLog("AgentHUD: local registry reporter died; relaunching in 5s")
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard !self.terminating else { return }
+                self.startLocalRegistryReporter()
+            }
+        }
         do {
             try p.run()
             registryReporter = p
