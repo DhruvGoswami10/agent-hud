@@ -49,6 +49,7 @@ Claude Code hook (Mac or VM)
 ```sh
 make run          # swift build, bundle dist/AgentHUD.app, launch
 make hooks        # add forwarder hooks to ~/.claude/settings.json (backs up first)
+make test         # Swift + Python test suites
 ```
 
 First run: macOS will ask once for **notification** permission, and the first

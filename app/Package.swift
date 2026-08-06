@@ -5,6 +5,7 @@ let package = Package(
     name: "AgentHUD",
     platforms: [.macOS(.v14)],
     targets: [
-        .executableTarget(name: "AgentHUD", path: "Sources/AgentHUD")
+        .executableTarget(name: "AgentHUD", path: "Sources/AgentHUD"),
+        .testTarget(name: "AgentHUDTests", dependencies: ["AgentHUD"], path: "Tests/AgentHUDTests"),
     ]
 )

@@ -140,7 +140,20 @@ struct ClipboardItem: Identifiable {
     let kind: Kind
     let text: String
     let image: NSImage?
+    let signature: String
     let ts = Date()
+}
+
+/// Content fingerprint used to ignore re-copies of identical content. Apps
+/// (Teams, Office, Electron things) re-assert the pasteboard when focus
+/// changes — routine when moving between displays — which bumps changeCount
+/// without the content actually changing.
+func clipboardSignature(kind: ClipboardItem.Kind, text: String, data: Data?) -> String {
+    switch kind {
+    case .text: return "t:\(text)"
+    case .file: return "f:\(text)"
+    case .image: return "i:\(data?.count ?? 0):\(data?.hashValue ?? 0)"
+    }
 }
 
 enum PeekContent {

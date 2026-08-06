@@ -105,9 +105,14 @@ def session_stats(sid):
                 if b"[Request interrupted by user" in line:
                     st["outcome"] = "interrupted"
                     continue
-                if b'"isApiErrorMessage":true' in line:
-                    st["outcome"] = "error"
-                    continue
+                # Parse rather than byte-match the value: JSON spacing varies.
+                if b"isApiErrorMessage" in line:
+                    try:
+                        if json.loads(line).get("isApiErrorMessage"):
+                            st["outcome"] = "error"
+                            continue
+                    except Exception:
+                        pass
                 if b'"usage"' not in line:
                     continue
                 try:

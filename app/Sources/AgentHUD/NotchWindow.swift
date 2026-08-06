@@ -41,7 +41,8 @@ final class NotchWindowController {
     private let state: AppState
     private(set) var metrics: Metrics
     private var mouseTimer: Timer?
-    private var lastInside = false
+    private var hoverGate = HoverGate()
+    private var ignoringMouse = true
 
     init(state: AppState) {
         self.state = state
@@ -94,17 +95,22 @@ final class NotchWindowController {
                           y: screen.frame.maxY - sz.height - 4,
                           width: sz.width + 8,
                           height: sz.height + 8)
-        let inside = rect.contains(NSEvent.mouseLocation)
-        if inside != lastInside {
-            lastInside = inside
+        let mouse = NSEvent.mouseLocation
+        let inside = rect.contains(mouse)
+        if inside == ignoringMouse {
+            ignoringMouse = !inside
             panel.ignoresMouseEvents = !inside
-            state.hoverChanged(inside)
+        }
+        if let engaged = hoverGate.update(point: mouse, inside: inside) {
+            state.hoverChanged(engaged)
         }
     }
 
-    static func contentSize(for target: HUDState, metrics m: Metrics,
-                            aggregate: EventKind, sideBars: Bool,
-                            peekPreview: CGSize? = nil) -> NSSize {
+    /// Pure geometry — no state touched, so it stays callable (and testable)
+    /// from anywhere.
+    nonisolated static func contentSize(for target: HUDState, metrics m: Metrics,
+                                        aggregate: EventKind, sideBars: Bool,
+                                        peekPreview: CGSize? = nil) -> NSSize {
         switch target {
         case .collapsed:
             guard m.hasNotch else { return NSSize(width: 210, height: 30) }
@@ -126,8 +132,13 @@ final class NotchWindowController {
         }
     }
 
+    /// The notched screen when there is one, else the primary display.
+    /// Deliberately not `NSScreen.main`: that follows keyboard focus, so on a
+    /// multi-display setup the HUD would hop screens as you click around.
     private static func targetScreen() -> NSScreen? {
-        NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main
+        NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 })
+            ?? NSScreen.screens.first
+            ?? NSScreen.main
     }
 
     private static func computeMetrics(for screen: NSScreen?) -> Metrics {

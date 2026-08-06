@@ -31,9 +31,14 @@ def scan_transcript(path, full):
                 if b"[Request interrupted by user" in raw:
                     outcome = "interrupted"
                     continue
-                if b'"isApiErrorMessage":true' in raw:
-                    outcome = "error"
-                    continue
+                # Parse rather than byte-match the value: JSON spacing varies.
+                if b"isApiErrorMessage" in raw:
+                    try:
+                        if json.loads(raw).get("isApiErrorMessage"):
+                            outcome = "error"
+                            continue
+                    except Exception:
+                        pass
                 if b"assistant" not in raw and b"custom-title" not in raw:
                     continue
                 try:

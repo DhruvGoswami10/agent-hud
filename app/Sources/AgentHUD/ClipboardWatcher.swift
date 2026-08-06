@@ -35,16 +35,21 @@ final class ClipboardWatcher {
             if let rep = NSBitmapImageRep(data: d) {
                 dims = "\(rep.pixelsWide)×\(rep.pixelsHigh)"
             }
-            return ClipboardItem(kind: .image, text: dims, image: img.hudThumbnail(maxDim: 320))
+            return ClipboardItem(kind: .image, text: dims, image: img.hudThumbnail(maxDim: 320),
+                                 signature: clipboardSignature(kind: .image, text: dims, data: d))
         }
         if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
            !urls.isEmpty {
-            return ClipboardItem(kind: .file, text: urls.map(\.lastPathComponent).joined(separator: ", "), image: nil)
+            let names = urls.map(\.lastPathComponent).joined(separator: ", ")
+            return ClipboardItem(kind: .file, text: names, image: nil,
+                                 signature: clipboardSignature(kind: .file, text: names, data: nil))
         }
         if let s = pb.string(forType: .string) {
             let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return nil }
-            return ClipboardItem(kind: .text, text: String(trimmed.prefix(800)), image: nil)
+            let text = String(trimmed.prefix(800))
+            return ClipboardItem(kind: .text, text: text, image: nil,
+                                 signature: clipboardSignature(kind: .text, text: text, data: nil))
         }
         return nil
     }

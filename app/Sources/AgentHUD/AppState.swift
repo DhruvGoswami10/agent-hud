@@ -130,8 +130,18 @@ final class AppState: ObservableObject {
 
     /// Runs shorter than this get only the silent peek — you were probably
     /// watching that session anyway; banners are for runs you walked away from.
-    private static let longRunThreshold: TimeInterval = 45
+    static let longRunThreshold: TimeInterval = 45
     private var runStarts: [String: Date] = [:]
+
+    /// Whether an event earns a banner + sound, as opposed to a silent peek.
+    static func shouldAlert(kind: EventKind, runDuration: TimeInterval, muted: Bool) -> Bool {
+        guard !muted else { return false }
+        switch kind {
+        case .attention: return true
+        case .done: return runDuration >= longRunThreshold
+        case .running, .info: return false
+        }
+    }
 
     func apply(_ event: AgentEvent) {
         eventsReceived += 1
@@ -153,9 +163,7 @@ final class AppState: ObservableObject {
             case .running, .info: break  // your own prompt isn't news
             }
         }
-        let loud = !muted && (event.kind == .attention
-            || (event.kind == .done && runDuration >= Self.longRunThreshold))
-        if loud {
+        if Self.shouldAlert(kind: event.kind, runDuration: runDuration, muted: muted) {
             Notifier.shared.post(for: event, enabled: systemNotifications)
             if sounds { Sound.play(for: event.kind) }
         }
@@ -350,6 +358,12 @@ final class AppState: ObservableObject {
     private var lastNative: NowPlaying?
     private var webNowPlaying: NowPlaying?
     private var webNowPlayingTs = Date.distantPast
+    private var lastMusicTitle = ""
+
+    /// Browsers throttle background-tab timers to roughly once a minute, so a
+    /// short freshness window would make a playing YouTube tab flicker in and
+    /// out of existence every time you click onto another display.
+    private static let webMusicFreshness: TimeInterval = 90
 
     func setWebNowPlaying(_ np: NowPlaying) {
         webNowPlaying = np
@@ -364,7 +378,7 @@ final class AppState: ObservableObject {
             setNowPlaying(nil)
             return
         }
-        let web = Date().timeIntervalSince(webNowPlayingTs) < 12 ? webNowPlaying : nil
+        let web = Date().timeIntervalSince(webNowPlayingTs) < Self.webMusicFreshness ? webNowPlaying : nil
         let pick: NowPlaying?
         if let n = native, n.playing {
             pick = n
@@ -387,13 +401,12 @@ final class AppState: ObservableObject {
     }
 
     private func setNowPlaying(_ np: NowPlaying?) {
-        let oldTitle = nowPlaying?.title
         nowPlaying = np
-        guard let np else {
-            nowPlayingArt = nil
-            return
-        }
-        guard np.title != oldTitle else { return }
+        // Keyed off the last *announced* track, not the current value: a track
+        // briefly going stale and coming back is not a new song, and must not
+        // re-peek or re-fetch artwork.
+        guard let np, np.title != lastMusicTitle else { return }
+        lastMusicTitle = np.title
         nowPlayingArt = nil
         nowPlayingArtColor = nil
         if !np.artworkURL.isEmpty, let url = URL(string: np.artworkURL) {
@@ -417,6 +430,9 @@ final class AppState: ObservableObject {
     // MARK: - Clipboard
 
     func clipboardChanged(_ item: ClipboardItem) {
+        // Identical content is a re-assert, not a new copy — see
+        // clipboardSignature. Common when switching apps/displays.
+        guard clipboard.first?.signature != item.signature else { return }
         clipboard.insert(item, at: 0)
         if clipboard.count > 10 { clipboard.removeLast(clipboard.count - 10) }
         if expandOnCopy && !hudState.isOpen {
