@@ -27,7 +27,7 @@ final class CommandQueue {
 final class EventServer {
     private let port: UInt16
     private let onEvent: (AgentEvent) -> Void
-    private let onSessions: (String, [LocalSessionEntry], [String: Int], [Int: Int]) -> Void
+    private let onSessions: (RegistryReport) -> Void
     private let onMusicState: (NowPlaying) -> Void
     private let onDebug: () -> String
     let musicCommands = CommandQueue()
@@ -39,7 +39,7 @@ final class EventServer {
 
     init(port: UInt16,
          onEvent: @escaping (AgentEvent) -> Void,
-         onSessions: @escaping (String, [LocalSessionEntry], [String: Int], [Int: Int]) -> Void,
+         onSessions: @escaping (RegistryReport) -> Void,
          onMusicState: @escaping (NowPlaying) -> Void,
          onDebug: @escaping () -> String = { "{}" }) {
         self.port = port
@@ -158,7 +158,9 @@ final class EventServer {
             if let hs = usageObj["hours"] as? [String: Int] {
                 for (k, v) in hs { if let hk = Int(k) { hours[hk] = v } }
             }
-            onSessions(host, entries, usage, hours)
+            let limits = (obj["limits"] as? [String: Any]).flatMap(AccountLimits.from(json:))
+            onSessions(RegistryReport(host: host, entries: entries, usage: usage,
+                                      hours: hours, limits: limits))
             respond(conn, status: "200 OK", body: #"{"ok":true,"sessions":\#(entries.count)}"#)
         case ("GET", "/debug"):
             respond(conn, status: "200 OK", body: onDebug())

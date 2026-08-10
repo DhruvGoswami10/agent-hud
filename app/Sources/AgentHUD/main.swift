@@ -38,8 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         server = EventServer(port: 48085, onEvent: { event in
             Task { @MainActor in state.apply(event) }
-        }, onSessions: { host, entries, usage, hours in
-            Task { @MainActor in state.syncRegistry(host: host, entries: entries, usage: usage, hours: hours) }
+        }, onSessions: { report in
+            Task { @MainActor in state.syncRegistry(report) }
         }, onMusicState: { np in
             Task { @MainActor in state.setWebNowPlaying(np) }
         }, onDebug: {

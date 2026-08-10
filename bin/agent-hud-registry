@@ -22,6 +22,7 @@ import json
 import os
 import re
 import socket
+import subprocess
 import time
 import urllib.request
 
@@ -256,12 +257,165 @@ def usage_windows():
     return {"h5": h5, "d7": d7, "h5_peak": peak, "hours": hours}
 
 
+# --- real account limits ------------------------------------------------------
+# Anthropic reports true rate-limit utilization (including per-model weekly
+# limits like Fable) at /api/oauth/usage — the same endpoint Claude Code's
+# /status and ccstatusline read. Source preference:
+#   1. ccstatusline's cache, if fresh — costs nothing and touches no secrets
+#      (but it only carries session/weekly, no per-model scope)
+#   2. a direct call with the local OAuth token, cached for USAGE_TTL — the
+#      only source for the per-model (Fable) limit
+#   3. Claude Code's own ~/.claude.json cache, however old it is
+# Every step degrades silently; the HUD falls back to token estimates.
+
+USAGE_CACHE = os.path.expanduser("~/.cache/agent-hud/usage.json")
+USAGE_TTL = 180
+CCSTATUSLINE_CACHE = os.path.expanduser("~/.cache/ccstatusline/usage.json")
+PLAN_NAMES = [
+    ("max_20x", "Max 20x"), ("max_5x", "Max 5x"), ("max", "Max"),
+    ("team", "Team"), ("enterprise", "Enterprise"), ("pro", "Pro"),
+]
+
+
+def account_info():
+    try:
+        with open(os.path.expanduser("~/.claude.json")) as f:
+            oa = json.load(f).get("oauthAccount") or {}
+    except Exception:
+        return {}
+    tier = (oa.get("organizationRateLimitTier") or "").lower()
+    plan = next((name for key, name in PLAN_NAMES if key in tier), "")
+    return {
+        "name": oa.get("displayName") or oa.get("emailAddress") or "",
+        "email": oa.get("emailAddress") or "",
+        "plan": plan,
+    }
+
+
+def _oauth_token():
+    """The local Claude Code OAuth token: macOS Keychain, else creds file."""
+    try:
+        r = subprocess.run(
+            ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+            capture_output=True, text=True, timeout=6)
+        if r.returncode == 0 and r.stdout.strip():
+            return json.loads(r.stdout.strip())["claudeAiOauth"]["accessToken"]
+    except Exception:
+        pass
+    try:
+        with open(os.path.expanduser("~/.claude/.credentials.json")) as f:
+            return json.load(f)["claudeAiOauth"]["accessToken"]
+    except Exception:
+        return None
+
+
+def _item(kind, label, percent, severity, resets_at):
+    return {"kind": kind, "label": label, "percent": round(float(percent), 1),
+            "severity": severity or "normal", "resets_at": resets_at or ""}
+
+
+def _from_api(u):
+    items = []
+    for lim in u.get("limits") or []:
+        kind = lim.get("kind") or ""
+        label = {"session": "5h", "weekly_all": "Week"}.get(kind, "")
+        if kind == "weekly_scoped":
+            label = (((lim.get("scope") or {}).get("model") or {}).get("display_name") or "Model")
+        if not label:
+            continue
+        items.append(_item(kind, label, lim.get("percent") or 0,
+                           lim.get("severity"), lim.get("resets_at")))
+    if not items:
+        for key, label in (("five_hour", "5h"), ("seven_day", "Week")):
+            w = u.get(key)
+            if isinstance(w, dict) and w.get("utilization") is not None:
+                items.append(_item(key, label, w["utilization"], "normal", w.get("resets_at")))
+    return items
+
+
+def _from_ccstatusline(d):
+    items = []
+    for key, reset_key, label in (("sessionUsage", "sessionResetAt", "5h"),
+                                  ("weeklyUsage", "weeklyResetAt", "Week"),
+                                  ("weeklyOpusUsage", "weeklyOpusResetAt", "Opus"),
+                                  ("weeklySonnetUsage", "weeklySonnetResetAt", "Sonnet")):
+        v = d.get(key)
+        if v:  # skip absent and 0 model-scoped entries
+            items.append(_item(key, label, v, "normal", d.get(reset_key)))
+    return items
+
+
+def _fetch_limits_uncached():
+    tok = _oauth_token()
+    if tok:
+        try:
+            req = urllib.request.Request(
+                "https://api.anthropic.com/api/oauth/usage",
+                headers={"Authorization": "Bearer " + tok,
+                         "anthropic-beta": "oauth-2025-04-20"})
+            u = json.loads(urllib.request.urlopen(req, timeout=8).read())
+            items = _from_api(u)
+            if items:
+                return {"source": "api", "items": items}
+        except Exception:
+            pass
+    try:
+        st = os.stat(CCSTATUSLINE_CACHE)
+        if time.time() - st.st_mtime < 900:
+            with open(CCSTATUSLINE_CACHE) as f:
+                items = _from_ccstatusline(json.load(f))
+            if items:
+                return {"source": "ccstatusline", "items": items}
+    except Exception:
+        pass
+    try:
+        with open(os.path.expanduser("~/.claude.json")) as f:
+            cached = json.load(f).get("cachedUsageUtilization") or {}
+        items = _from_api(cached.get("utilization") or {})
+        if items:
+            return {"source": "claude.json", "items": items,
+                    "fetched_at": (cached.get("fetchedAtMs") or 0) / 1000.0}
+    except Exception:
+        pass
+    return None
+
+
+def limits():
+    try:
+        st = os.stat(USAGE_CACHE)
+        if time.time() - st.st_mtime < USAGE_TTL:
+            with open(USAGE_CACHE) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    data = _fetch_limits_uncached()
+    if not data:
+        return None
+    data.setdefault("fetched_at", time.time())
+    data["account"] = account_info()
+    try:
+        os.makedirs(os.path.dirname(USAGE_CACHE), exist_ok=True)
+        with open(USAGE_CACHE, "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+    return data
+
+
+def payload():
+    body = {"host": HOST, "sessions": snapshot(), "usage": usage_windows()}
+    lim = limits()
+    if lim:
+        body["limits"] = lim
+    return body
+
+
 def main():
     if os.environ.get("AGENT_HUD_ONESHOT"):
-        print(json.dumps({"host": HOST, "sessions": snapshot(), "usage": usage_windows()}, indent=1))
+        print(json.dumps(payload(), indent=1))
         return
     while True:
-        body = json.dumps({"host": HOST, "sessions": snapshot(), "usage": usage_windows()}).encode()
+        body = json.dumps(payload()).encode()
         try:
             req = urllib.request.Request(
                 URL + "/sessions", data=body,

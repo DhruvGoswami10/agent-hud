@@ -122,6 +122,13 @@ struct SessionInfo: Identifiable {
     /// Sessions on [1m] models exceed the standard 200k window; infer it.
     var effectiveCtxLimit: Int { ctxUsed > 220_000 ? 1_000_000 : ctxLimit }
 
+    /// Registry and hook sources are Claude Code; browser tabs say who they are.
+    var provider: Provider {
+        let p = Provider.detect(model: model, project: project,
+                                sessionName: sessionName, host: host)
+        return (p == .generic && host != "web") ? .claude : p
+    }
+
     var ctxFraction: Double? {
         guard ctxUsed > 0 else { return nil }
         return min(1, Double(ctxUsed) / Double(effectiveCtxLimit))

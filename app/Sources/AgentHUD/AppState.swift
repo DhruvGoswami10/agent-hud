@@ -59,11 +59,17 @@ final class AppState: ObservableObject {
     }
 
     var remoteHostCount: Int {
-        Set(sessions.map(\.host)).subtracting([Host.local, "web"]).count
+        Set(sessions.map(\.host)).filter { !Host.isLocal($0) && $0 != "web" }.count
     }
 
     enum Host {
         static let local = String(ProcessInfo.processInfo.hostName.split(separator: ".").first ?? "mac")
+
+        /// Hostname casing differs between ProcessInfo and python's
+        /// socket.gethostname(), so compare case-insensitively.
+        static func isLocal(_ host: String) -> Bool {
+            host.caseInsensitiveCompare(local) == .orderedSame
+        }
     }
 
     /// JSON snapshot for GET /debug — the observability we owe ourselves.
@@ -303,6 +309,19 @@ final class AppState: ObservableObject {
     var estH5: Int { hostUsage.values.reduce(0) { $0 + ($1["h5"] ?? 0) } }
     var estD7: Int { hostUsage.values.reduce(0) { $0 + ($1["d7"] ?? 0) } }
     var estPeak: Int { hostUsage.values.reduce(0) { $0 + ($1["h5_peak"] ?? 0) } }
+
+    /// Real account limits, kept from whichever machine reported most
+    /// recently — they're account-wide, so the freshest reading wins.
+    @Published private(set) var accountLimits: AccountLimits?
+
+    func syncRegistry(_ report: RegistryReport) {
+        syncRegistry(host: report.host, entries: report.entries,
+                     usage: report.usage, hours: report.hours)
+        if let limits = report.limits,
+           limits.fetchedAt > (accountLimits?.fetchedAt ?? .distantPast) {
+            accountLimits = limits
+        }
+    }
 
     func syncRegistry(host: String, entries: [LocalSessionEntry], usage: [String: Int] = [:], hours: [Int: Int] = [:]) {
         hostLastReport[host] = Date()

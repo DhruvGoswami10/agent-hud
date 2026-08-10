@@ -458,32 +458,92 @@ private struct OpenPanel: View {
     }
 }
 
-/// Estimated Claude usage across all connected machines, ccusage-style.
-/// The 5h bar is normalized against the busiest 5h window of the past week.
+/// Real account limits when we have them (Anthropic's own utilisation
+/// numbers, including per-model weekly caps like Fable), falling back to our
+/// token estimates when no live reading is available.
 private struct MetersRow: View {
     @ObservedObject var state: AppState
 
     var body: some View {
-        if state.estD7 > 0 {
-            HStack(spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.white.opacity(0.1))
-                        .frame(width: 26, height: 26)
-                    Text("C").font(.system(size: 13, weight: .bold)).foregroundStyle(.white.opacity(0.9))
+        if let limits = state.accountLimits {
+            realLimits(limits)
+        } else if state.estD7 > 0 {
+            estimated
+        }
+    }
+
+    private func realLimits(_ limits: AccountLimits) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                BrandMark(provider: .claude, size: 15)
+                Text(limits.plan.isEmpty ? "Claude" : limits.plan)
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
+                if !limits.accountName.isEmpty {
+                    Text("· \(limits.accountName)")
+                        .font(.system(size: 10)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
                 }
-                VStack(spacing: 5) {
-                    meter("5h", state.estH5, max(state.estPeak, state.estH5, 1))
-                    meter("7d", state.estD7, max(state.estPeak * 33, state.estD7, 1))
-                }
-                Text("EST.")
-                    .font(.system(size: 7.5, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.3))
+                Spacer(minLength: 4)
+                Text(limits.isLive ? "live" : "stale")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(limits.isLive ? .white.opacity(0.35) : EventKind.attention.color.opacity(0.8))
                     .kerning(0.6)
             }
-            .padding(9)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hudCard))
-            .help("Estimated tokens (input + cache-write + output) from all transcripts; 5h bar is relative to your busiest 5-hour window this week")
+            ForEach(limits.items) { limitRow($0) }
         }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hudCard))
+        .help("Live rate-limit utilisation for your account, refreshed a few times an hour")
+    }
+
+    private func limitRow(_ item: LimitItem) -> some View {
+        let color: Color = item.isCritical ? EventKind.attention.color
+            : (item.isWarning ? Color(red: 1, green: 0.78, blue: 0.35) : EventKind.running.color)
+        return HStack(spacing: 7) {
+            Text(item.label)
+                .font(.system(size: 9.5, weight: .semibold)).foregroundStyle(.white.opacity(0.55))
+                .frame(width: 38, alignment: .leading).lineLimit(1)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.white.opacity(0.1))
+                    Capsule().fill(color)
+                        .frame(width: max(3, geo.size.width * min(1, item.percent / 100)))
+                }
+            }
+            .frame(height: 5)
+            Text("\(Int(item.percent.rounded()))%")
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundStyle(item.isCritical ? color : .white.opacity(0.85))
+                .frame(width: 34, alignment: .trailing)
+            Text(Self.resetLabel(item.resetsAt))
+                .font(.system(size: 8.5)).foregroundStyle(.white.opacity(0.35))
+                .frame(width: 74, alignment: .trailing).lineLimit(1)
+        }
+    }
+
+    static func resetLabel(_ date: Date?) -> String {
+        guard let date else { return "" }
+        let seconds = date.timeIntervalSinceNow
+        guard seconds > 0 else { return "resetting…" }
+        let f = DateFormatter()
+        f.dateFormat = seconds < 20 * 3600 ? "HH:mm" : "EEE HH:mm"
+        return "resets \(f.string(from: date))"
+    }
+
+    private var estimated: some View {
+        HStack(spacing: 10) {
+            BrandMark(provider: .claude, size: 15)
+            VStack(spacing: 5) {
+                meter("5h", state.estH5, max(state.estPeak, state.estH5, 1))
+                meter("7d", state.estD7, max(state.estPeak * 33, state.estD7, 1))
+            }
+            Text("EST.")
+                .font(.system(size: 7.5, weight: .bold))
+                .foregroundStyle(.white.opacity(0.3))
+                .kerning(0.6)
+        }
+        .padding(9)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hudCard))
+        .help("Estimated tokens from transcripts — no live limit reading available")
     }
 
     private func meter(_ label: String, _ value: Int, _ denom: Int) -> some View {
@@ -518,7 +578,7 @@ private struct SessionCard: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.white.opacity(0.1))
                     .frame(width: 25, height: 25)
-                Text(providerLetter).font(.system(size: 12, weight: .bold)).foregroundStyle(.white.opacity(0.85))
+                BrandMark(provider: session.provider, size: 14)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(sessionDisplayName(session.sessionName, project: session.project))
@@ -566,12 +626,8 @@ private struct SessionCard: View {
         .onTapGesture(perform: onSelect)
     }
 
-    private var providerLetter: String {
-        session.host == "web" ? String(session.project.prefix(1)).uppercased() : "C"
-    }
-
     private var subtitle: String {
-        let hostLabel = session.host == AppState.Host.local ? "Local" : HostAliases.display(session.host)
+        let hostLabel = AppState.Host.isLocal(session.host) ? "Local" : HostAliases.display(session.host)
         if session.message.isEmpty { return hostLabel }
         return "\(String(session.message.prefix(38))) · \(hostLabel)"
     }
@@ -589,7 +645,7 @@ private struct DetailPane: View {
                     Text(sessionDisplayName(s.sessionName, project: s.project))
                         .font(.system(size: 13, weight: .bold)).foregroundStyle(.white).lineLimit(2)
                     Spacer(minLength: 4)
-                    Text(s.host == AppState.Host.local ? "local" : HostAliases.display(s.host))
+                    Text(AppState.Host.isLocal(s.host) ? "local" : HostAliases.display(s.host))
                         .font(.system(size: 9, weight: .semibold)).foregroundStyle(.white.opacity(0.6))
                         .padding(.horizontal, 7).padding(.vertical, 3)
                         .background(Capsule().fill(.white.opacity(0.08)))
