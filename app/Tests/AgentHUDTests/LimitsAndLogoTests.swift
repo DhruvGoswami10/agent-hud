@@ -63,34 +63,79 @@ final class AccountLimitsTests: XCTestCase {
 
 @MainActor
 final class LimitsSyncTests: XCTestCase {
-    private func report(host: String, fetchedAt: Date, percent: Double) -> RegistryReport {
+    private func report(host: String, fetchedAt: Date, percent: Double,
+                        account: String = "work-uuid", name: String = "Dhruv",
+                        plan: String = "Max 20x") -> RegistryReport {
         let limits = AccountLimits.from(json: [
             "source": "api",
             "fetched_at": fetchedAt.timeIntervalSince1970,
-            "account": ["name": "Dhruv", "plan": "Max 20x"],
+            "account": ["uuid": account, "name": name, "plan": plan],
             "items": [["kind": "session", "label": "5h", "percent": percent,
                        "severity": "normal", "resets_at": ""]],
         ])
         return RegistryReport(host: host, entries: [], limits: limits)
     }
 
-    /// Limits are account-wide, so the freshest reading from any machine wins
-    /// — an older report from another box must not clobber it.
-    func testFreshestReadingWinsAcrossMachines() {
+    /// Limits are account-wide, so within one account the freshest reading
+    /// from any machine wins — an older report must not clobber it.
+    func testFreshestReadingWinsWithinAnAccount() {
         let s = AppState()
         s.syncRegistry(report(host: "mac", fetchedAt: Date(), percent: 40))
         s.syncRegistry(report(host: "box", fetchedAt: Date(timeIntervalSinceNow: -600), percent: 11))
-        XCTAssertEqual(s.accountLimits?.items.first?.percent, 40)
+        XCTAssertEqual(s.accountLimits.count, 1)
+        XCTAssertEqual(s.accountLimits.first?.items.first?.percent, 40)
 
         s.syncRegistry(report(host: "box", fetchedAt: Date(timeIntervalSinceNow: 60), percent: 55))
-        XCTAssertEqual(s.accountLimits?.items.first?.percent, 55, "a newer reading must win")
+        XCTAssertEqual(s.accountLimits.first?.items.first?.percent, 55, "a newer reading must win")
+    }
+
+    /// Work login on the Mac, personal login on a dev box: two cards.
+    func testTwoAccountsCoexist() {
+        let s = AppState()
+        s.syncRegistry(report(host: "mac", fetchedAt: Date(), percent: 40,
+                              account: "work-uuid", name: "Dhruv", plan: "Max 20x"))
+        s.syncRegistry(report(host: "box", fetchedAt: Date(), percent: 18,
+                              account: "personal-uuid", name: "dhruv@gmail", plan: "Pro"))
+        XCTAssertEqual(s.accountLimits.count, 2)
+        XCTAssertEqual(Set(s.accountLimits.map(\.plan)), ["Max 20x", "Pro"])
+        let work = s.accountLimits.first { $0.key == "work-uuid" }
+        XCTAssertEqual(work?.hosts, ["mac"], "each card names the machines using it")
+    }
+
+    /// After /logout + /login the machine reports a different account; the
+    /// old one must disappear rather than linger with stale numbers.
+    func testSwitchingAccountReplacesTheCard() {
+        let s = AppState()
+        s.syncRegistry(report(host: "mac", fetchedAt: Date(), percent: 40, account: "work-uuid"))
+        XCTAssertEqual(s.accountLimits.count, 1)
+        s.syncRegistry(report(host: "mac", fetchedAt: Date(), percent: 5,
+                              account: "personal-uuid", name: "dhruv@gmail", plan: "Pro"))
+        XCTAssertEqual(s.accountLimits.count, 1, "the abandoned account must not linger")
+        XCTAssertEqual(s.accountLimits.first?.plan, "Pro")
+    }
+
+    func testSharedAccountListsEveryMachine() {
+        let s = AppState()
+        for host in ["mac", "box6", "box54"] {
+            s.syncRegistry(report(host: host, fetchedAt: Date(), percent: 40))
+        }
+        XCTAssertEqual(s.accountLimits.count, 1)
+        XCTAssertEqual(s.accountLimits.first?.hosts, ["mac", "box6", "box54"])
     }
 
     func testReportWithoutLimitsKeepsPrevious() {
         let s = AppState()
         s.syncRegistry(report(host: "mac", fetchedAt: Date(), percent: 40))
         s.syncRegistry(RegistryReport(host: "box", entries: []))
-        XCTAssertEqual(s.accountLimits?.items.first?.percent, 40)
+        XCTAssertEqual(s.accountLimits.first?.items.first?.percent, 40)
+    }
+
+    func testAncientReadingsAreDropped() {
+        let s = AppState()
+        s.syncRegistry(report(host: "mac",
+                              fetchedAt: Date(timeIntervalSinceNow: -AppState.limitsRetention - 60),
+                              percent: 40))
+        XCTAssertTrue(s.accountLimits.isEmpty)
     }
 }
 

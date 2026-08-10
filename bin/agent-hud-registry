@@ -285,9 +285,13 @@ def account_info():
         return {}
     tier = (oa.get("organizationRateLimitTier") or "").lower()
     plan = next((name for key, name in PLAN_NAMES if key in tier), "")
+    email = oa.get("emailAddress") or ""
     return {
-        "name": oa.get("displayName") or oa.get("emailAddress") or "",
-        "email": oa.get("emailAddress") or "",
+        # uuid identifies the account even if the display name is duplicated;
+        # each machine reports whichever account IT is logged into.
+        "uuid": oa.get("accountUuid") or email,
+        "name": oa.get("displayName") or email,
+        "email": email,
         "plan": plan,
     }
 
@@ -381,18 +385,23 @@ def _fetch_limits_uncached():
 
 
 def limits():
+    acct = account_info()
     try:
         st = os.stat(USAGE_CACHE)
         if time.time() - st.st_mtime < USAGE_TTL:
             with open(USAGE_CACHE) as f:
-                return json.load(f)
+                cached = json.load(f)
+            # A cached reading belongs to the account it was fetched for —
+            # after a /logout + /login it must not be shown for the new one.
+            if (cached.get("account") or {}).get("uuid") == acct.get("uuid"):
+                return cached
     except Exception:
         pass
     data = _fetch_limits_uncached()
     if not data:
         return None
     data.setdefault("fetched_at", time.time())
-    data["account"] = account_info()
+    data["account"] = acct
     try:
         os.makedirs(os.path.dirname(USAGE_CACHE), exist_ok=True)
         with open(USAGE_CACHE, "w") as f:

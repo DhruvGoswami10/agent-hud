@@ -310,17 +310,43 @@ final class AppState: ObservableObject {
     var estD7: Int { hostUsage.values.reduce(0) { $0 + ($1["d7"] ?? 0) } }
     var estPeak: Int { hostUsage.values.reduce(0) { $0 + ($1["h5_peak"] ?? 0) } }
 
-    /// Real account limits, kept from whichever machine reported most
-    /// recently — they're account-wide, so the freshest reading wins.
-    @Published private(set) var accountLimits: AccountLimits?
+    /// Real limits, one entry per Claude account. Each machine reports the
+    /// account it is logged into, so a work login on the Mac and a personal
+    /// login on a dev box both get their own card. Within an account the
+    /// freshest reading wins, since limits are account-wide.
+    @Published private(set) var accountLimits: [AccountLimits] = []
+    private var limitsByAccount: [String: AccountLimits] = [:]
+    private var hostAccount: [String: String] = [:]
+
+    /// Readings older than this are dropped — an account nobody is using
+    /// shouldn't linger on the HUD.
+    static let limitsRetention: TimeInterval = 3600
 
     func syncRegistry(_ report: RegistryReport) {
         syncRegistry(host: report.host, entries: report.entries,
                      usage: report.usage, hours: report.hours)
-        if let limits = report.limits,
-           limits.fetchedAt > (accountLimits?.fetchedAt ?? .distantPast) {
-            accountLimits = limits
+        guard let limits = report.limits else { return }
+        hostAccount[report.host] = limits.key
+        if limits.fetchedAt >= (limitsByAccount[limits.key]?.fetchedAt ?? .distantPast) {
+            limitsByAccount[limits.key] = limits
         }
+        rebuildAccountLimits()
+    }
+
+    private func rebuildAccountLimits() {
+        let now = Date()
+        var byAccount: [String: Set<String>] = [:]
+        for (host, key) in hostAccount { byAccount[key, default: []].insert(host) }
+        accountLimits = limitsByAccount.values
+            .filter { now.timeIntervalSince($0.fetchedAt) < Self.limitsRetention }
+            .map { limits in
+                var l = limits
+                l.hosts = byAccount[limits.key] ?? []
+                return l
+            }
+            .filter { !$0.hosts.isEmpty }   // an account nobody reports is gone
+            .sorted { $0.fetchedAt > $1.fetchedAt }
+        limitsByAccount = limitsByAccount.filter { key, _ in byAccount[key] != nil }
     }
 
     func syncRegistry(host: String, entries: [LocalSessionEntry], usage: [String: Int] = [:], hours: [Int: Int] = [:]) {

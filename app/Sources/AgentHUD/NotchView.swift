@@ -465,37 +465,50 @@ private struct MetersRow: View {
     @ObservedObject var state: AppState
 
     var body: some View {
-        if let limits = state.accountLimits {
-            realLimits(limits)
+        if !state.accountLimits.isEmpty {
+            VStack(spacing: 6) {
+                ForEach(state.accountLimits) { limits in
+                    realLimits(limits, compact: state.accountLimits.count > 1)
+                }
+            }
         } else if state.estD7 > 0 {
             estimated
         }
     }
 
-    private func realLimits(_ limits: AccountLimits) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+    private func realLimits(_ limits: AccountLimits, compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: compact ? 5 : 7) {
             HStack(spacing: 8) {
-                BrandMark(provider: .claude, size: 15)
+                BrandMark(provider: .claude, size: compact ? 13 : 15)
                 Text(limits.plan.isEmpty ? "Claude" : limits.plan)
-                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
+                    .font(.system(size: compact ? 10.5 : 11, weight: .semibold)).foregroundStyle(.white)
                 if !limits.accountName.isEmpty {
                     Text("· \(limits.accountName)")
                         .font(.system(size: 10)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
                 }
                 Spacer(minLength: 4)
+                if compact, !limits.hosts.isEmpty {
+                    // With several accounts, say which machines use this one.
+                    Text(limits.hosts.map(Self.hostLabel).sorted().joined(separator: " "))
+                        .font(.system(size: 8.5)).foregroundStyle(.white.opacity(0.4)).lineLimit(1)
+                }
                 Text(limits.isLive ? "live" : "stale")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(limits.isLive ? .white.opacity(0.35) : EventKind.attention.color.opacity(0.8))
                     .kerning(0.6)
             }
-            ForEach(limits.items) { limitRow($0) }
+            ForEach(limits.items) { limitRow($0, compact: compact) }
         }
-        .padding(10)
+        .padding(compact ? 8 : 10)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hudCard))
-        .help("Live rate-limit utilisation for your account, refreshed a few times an hour")
+        .help("Live rate-limit utilisation for \(limits.accountName.isEmpty ? "this account" : limits.accountName)")
     }
 
-    private func limitRow(_ item: LimitItem) -> some View {
+    static func hostLabel(_ host: String) -> String {
+        AppState.Host.isLocal(host) ? "mac" : HostAliases.display(host)
+    }
+
+    private func limitRow(_ item: LimitItem, compact: Bool = false) -> some View {
         let color: Color = item.isCritical ? EventKind.attention.color
             : (item.isWarning ? Color(red: 1, green: 0.78, blue: 0.35) : EventKind.running.color)
         return HStack(spacing: 7) {
@@ -514,9 +527,11 @@ private struct MetersRow: View {
                 .font(.system(size: 10, weight: .bold, design: .rounded))
                 .foregroundStyle(item.isCritical ? color : .white.opacity(0.85))
                 .frame(width: 34, alignment: .trailing)
-            Text(Self.resetLabel(item.resetsAt))
-                .font(.system(size: 8.5)).foregroundStyle(.white.opacity(0.35))
-                .frame(width: 74, alignment: .trailing).lineLimit(1)
+            if !compact {
+                Text(Self.resetLabel(item.resetsAt))
+                    .font(.system(size: 8.5)).foregroundStyle(.white.opacity(0.35))
+                    .frame(width: 74, alignment: .trailing).lineLimit(1)
+            }
         }
     }
 

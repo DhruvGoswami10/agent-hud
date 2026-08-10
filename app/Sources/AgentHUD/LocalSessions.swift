@@ -33,13 +33,17 @@ struct LimitItem: Identifiable {
     var isWarning: Bool { severity == "warning" || (percent >= 75 && !isCritical) }
 }
 
-struct AccountLimits {
+struct AccountLimits: Identifiable {
+    let key: String           // account uuid (or email) — one card per account
     let source: String        // api | ccstatusline | claude.json
     let fetchedAt: Date
     let accountName: String
     let plan: String
     let items: [LimitItem]
+    /// Machines currently logged into this account; filled in by AppState.
+    var hosts: Set<String> = []
 
+    var id: String { key }
     var isLive: Bool { Date().timeIntervalSince(fetchedAt) < 1800 }
 
     static func from(json: [String: Any]) -> AccountLimits? {
@@ -59,7 +63,11 @@ struct AccountLimits {
                              resetsAt: resets)
         }
         guard !items.isEmpty else { return nil }
+        let key = (account["uuid"] as? String)
+            ?? (account["email"] as? String)
+            ?? (account["name"] as? String) ?? "default"
         return AccountLimits(
+            key: key,
             source: (json["source"] as? String) ?? "unknown",
             fetchedAt: Date(timeIntervalSince1970: (json["fetched_at"] as? Double) ?? 0),
             accountName: (account["name"] as? String) ?? "",
