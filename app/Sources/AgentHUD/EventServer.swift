@@ -9,11 +9,24 @@ import Network
 final class CommandQueue {
     private let lock = NSLock()
     private var items: [(tab: String, cmd: String)] = []
+    private var history: [String] = []
+
+    private static let clock: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
+
+    private func note(_ s: String) {
+        history.append("\(Self.clock.string(from: Date())) \(s)")
+        if history.count > 20 { history.removeFirst(history.count - 20) }
+    }
 
     func push(_ c: String, tab: String = "") {
         lock.lock()
         items.append((tab, c))
         if items.count > 8 { items.removeFirst(items.count - 8) }
+        note("push \(c) → \(tab.isEmpty ? "legacy" : tab)")
         lock.unlock()
     }
 
@@ -25,7 +38,16 @@ final class CommandQueue {
         defer { lock.unlock() }
         let mine = items.filter { $0.tab == tab }.map(\.cmd)
         items.removeAll { $0.tab == tab }
+        if !mine.isEmpty { note("pop \(tab.isEmpty ? "legacy" : tab) ← \(mine.joined(separator: ","))") }
         return mine
+    }
+
+    /// Every push/pop with timestamps — the forensics for "who paused my
+    /// music": if nothing is here, the HUD didn't send it.
+    func recentActivity() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return history
     }
 }
 
@@ -35,6 +57,8 @@ final class EventServer {
     private let onSessions: (RegistryReport) -> Void
     private let onMusicState: (NowPlaying) -> Void
     private let onDebug: () -> String
+    /// Optional: POST /music/commands → (command, explicit tab or nil).
+    var onMusicCommand: ((String, String?) -> Void)?
     let musicCommands = CommandQueue()
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "agenthud.server")
@@ -123,6 +147,16 @@ final class EventServer {
             let cmds = musicCommands.pop(for: Self.queryValue(query, "tab") ?? "")
             let json = (try? JSONSerialization.data(withJSONObject: ["commands": cmds])) ?? Data("{\"commands\":[]}".utf8)
             respond(conn, status: "200 OK", body: String(decoding: json, as: UTF8.self))
+        case ("POST", "/music/commands"):
+            // Same path as clicking the bar's buttons — scriptable controls,
+            // and the way to prove command delivery when debugging.
+            guard let obj = try? JSONSerialization.jsonObject(with: req.body) as? [String: Any],
+                  let cmd = obj["command"] as? String, !cmd.isEmpty else {
+                respond(conn, status: "400 Bad Request", body: #"{"ok":false}"#)
+                return
+            }
+            onMusicCommand?(cmd, obj["tab"] as? String)
+            respond(conn, status: "200 OK", body: #"{"ok":true}"#)
         case ("POST", "/event"):
             guard
                 let obj = try? JSONSerialization.jsonObject(with: req.body) as? [String: Any],

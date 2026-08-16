@@ -205,9 +205,9 @@ private struct PeekView: View {
                         .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "waveform")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Color(red: 1, green: 0.45, blue: 0.6))
+                // The source's own mark (YouTube / Spotify / Music), so the
+                // peek says where the sound lives at a glance.
+                MusicSourceMark(app: np.app, size: 16)
             }
         }
         .padding(.horizontal, 20)
@@ -414,7 +414,7 @@ private struct OpenPanel: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(np.title).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
                         HStack(spacing: 4) {
-                            sourceMark(np, size: 9)
+                            MusicSourceMark(app: np.app, size: 9)
                             Text(np.artist.isEmpty ? np.app : "\(np.artist) · \(np.app)")
                                 .font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
                         }
@@ -431,30 +431,6 @@ private struct OpenPanel: View {
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hudCard))
-    }
-
-    /// Where the sound is coming from, as a glyph — YouTube's play badge,
-    /// Spotify's rings, or a plain note for Apple Music.
-    @ViewBuilder
-    private func sourceMark(_ np: NowPlaying, size: CGFloat) -> some View {
-        switch np.app {
-        case "YouTube":
-            SVGShape(data: BrandPaths.youtube)
-                .fill(Color(red: 1.0, green: 0.23, blue: 0.19))
-                .frame(width: size + 1, height: size)
-        case "Spotify":
-            SVGShape(data: BrandPaths.spotify)
-                .fill(Color(red: 0.12, green: 0.84, blue: 0.38))
-                .frame(width: size, height: size)
-        case "Music":
-            Image(systemName: "music.note")
-                .font(.system(size: size - 1, weight: .semibold))
-                .foregroundStyle(Color(red: 0.98, green: 0.34, blue: 0.42))
-        default:
-            Image(systemName: "globe")
-                .font(.system(size: size - 1))
-                .foregroundStyle(.white.opacity(0.5))
-        }
     }
 
     private func musicButton(_ symbol: String, size: CGFloat, action: @escaping () -> Void) -> some View {

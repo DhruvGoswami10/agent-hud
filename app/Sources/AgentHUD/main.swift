@@ -46,6 +46,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.sync { MainActor.assumeIsolated { state.debugDump() } }
         })
         state.webMusicQueue = server.musicCommands
+        server.onMusicCommand = { cmd, tab in
+            Task { @MainActor in state.externalMusicCommand(cmd, tab: tab) }
+        }
         do {
             try server.start()
         } catch {

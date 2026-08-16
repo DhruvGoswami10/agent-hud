@@ -120,6 +120,45 @@ final class StuckSessionTests: XCTestCase {
                        "past an hour it's a ghost")
     }
 
+    /// A vanished session must demote QUIETLY — routing cleanup through the
+    /// alert path made ghosts chime like real finishes (random Glass all day).
+    func testVanishedSessionDemotesQuietly() {
+        let s = AppState()
+        s.syncRegistry(host: "box", entries: [entry("S", status: "busy")])
+        s.apply(event(.running, host: "box", sid: "S",
+                      ts: Date(timeIntervalSinceNow: -300)))
+        let eventCount = s.events.count
+        s.syncRegistry(host: "box", entries: [])
+        XCTAssertEqual(s.sessions.first?.kind, .done)
+        XCTAssertEqual(s.events.count, eventCount,
+                       "cleanup is bookkeeping, not an announcement")
+    }
+
+    /// A quiet demote must clear the run-start, or the next resume of the
+    /// same session id inherits an hours-old start time and a 5-second run
+    /// fires the long-run chime — the exact class this cleanup exists to kill.
+    func testVanishedSessionClearsItsRunStart() {
+        let s = AppState()
+        s.syncRegistry(host: "box", entries: [entry("S", status: "busy")])
+        s.apply(event(.running, host: "box", sid: "S",
+                      ts: Date(timeIntervalSinceNow: -300)))
+        XCTAssertNotNil(s.runStarts["box#S"])
+        s.syncRegistry(host: "box", entries: [])
+        XCTAssertNil(s.runStarts["box#S"],
+                     "a stale start fakes a long run on the next resume")
+    }
+
+    /// A quiet demote must re-rank the list — a dead card sorted above live
+    /// ones can occupy a visible slot while a live session hides past the cut.
+    func testQuietDemoteResorts() {
+        let s = AppState()
+        s.syncRegistry(host: "box", entries: [entry("A", status: "busy"),
+                                              entry("B", status: "busy")])
+        s.syncRegistry(host: "box", entries: [entry("B", status: "busy")])
+        XCTAssertEqual(s.sessions.last?.id, "box#A", "the dead card sinks")
+        XCTAssertEqual(s.sessions.first?.kind, .running, "the live card leads")
+    }
+
     /// The receipt fields ride the registry report into the session card.
     func testChangeReceiptFieldsFlowThroughRegistry() {
         let s = AppState()
@@ -185,6 +224,19 @@ final class WebMusicArbitrationTests: XCTestCase {
         XCTAssertEqual(s.nowPlaying?.title, "two", "when the shown tab pauses, the playing one wins")
     }
 
+    /// Pre-update tabs all report tab="" — a paused one must not clobber the
+    /// playing one's shared slot (the real-time play/pause flap + peek storm
+    /// + wrong-tab pauses Dhruv hit on 2026-08-16).
+    func testLegacyTabsDoNotClobberEachOther() {
+        let s = AppState()
+        s.setWebNowPlaying(np("Barcelona", tab: "", playing: true))
+        XCTAssertEqual(s.nowPlaying?.title, "Barcelona")
+        s.setWebNowPlaying(np("For Always", tab: "", playing: false))
+        XCTAssertEqual(s.nowPlaying?.title, "Barcelona",
+                       "a paused legacy tab must not steal the bar from a playing one")
+        XCTAssertEqual(s.nowPlaying?.playing, true)
+    }
+
     func testNativePlayerBeatsWebTabs() {
         let s = AppState()
         s.setWebNowPlaying(np("web", tab: "t1", playing: true))
@@ -205,6 +257,18 @@ final class CommandRoutingTests: XCTestCase {
         XCTAssertEqual(q.pop(for: "t1"), ["next"])
         XCTAssertEqual(q.pop(for: ""), ["playpause"])
         XCTAssertEqual(q.pop(for: "t1"), [])
+    }
+
+    /// Push/pop history is the forensics for "who paused my music" — if the
+    /// log is empty, the HUD didn't send it.
+    func testCommandQueueKeepsForensics() {
+        let q = CommandQueue()
+        q.push("playpause", tab: "t1")
+        _ = q.pop(for: "t1")
+        let h = q.recentActivity()
+        XCTAssertEqual(h.count, 2)
+        XCTAssertTrue(h[0].contains("push playpause → t1"))
+        XCTAssertTrue(h[1].contains("pop t1 ← playpause"))
     }
 
     /// The route switch matches bare paths — a query string used to 404.

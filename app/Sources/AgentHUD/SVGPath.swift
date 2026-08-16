@@ -295,3 +295,31 @@ struct SVGShape: Shape {
             CGAffineTransform(translationX: dx, y: dy).scaledBy(x: scale, y: scale))
     }
 }
+
+/// Which player the sound comes from, as a small brand glyph — used on the
+/// now-playing bar and the music peek.
+struct MusicSourceMark: View {
+    let app: String
+    var size: CGFloat = 9
+
+    var body: some View {
+        switch app {
+        case "YouTube":
+            SVGShape(data: BrandPaths.youtube)
+                .fill(Color(red: 1.0, green: 0.23, blue: 0.19))
+                .frame(width: size + 1, height: size)
+        case "Spotify":
+            SVGShape(data: BrandPaths.spotify)
+                .fill(Color(red: 0.12, green: 0.84, blue: 0.38))
+                .frame(width: size, height: size)
+        case "Music":
+            Image(systemName: "music.note")
+                .font(.system(size: size - 1, weight: .semibold))
+                .foregroundStyle(Color(red: 0.98, green: 0.34, blue: 0.42))
+        default:
+            Image(systemName: "waveform")
+                .font(.system(size: size - 1))
+                .foregroundStyle(.white.opacity(0.5))
+        }
+    }
+}

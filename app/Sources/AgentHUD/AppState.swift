@@ -117,6 +117,15 @@ final class AppState: ObservableObject {
                       "assertionAlive": Caffeine.shared.assertionAlive,
                       "jiggleAuthorized": Caffeine.shared.jiggleAuthorized],
             "hostLastReport": hostLastReport.mapValues { "\(Int(Date().timeIntervalSince($0)))s ago" },
+            "music": [
+                "bar": nowPlaying.map {
+                    "\($0.app) · \($0.title) · \($0.playing ? "playing" : "paused") · tab=\($0.tab.isEmpty ? "legacy" : $0.tab)"
+                } ?? "none",
+                "tabs": webStates.map { key, v in
+                    "\(key.isEmpty ? "legacy" : key): \(v.np.title) \(v.np.playing ? "▶" : "⏸") \(Int(Date().timeIntervalSince(v.ts)))s ago"
+                },
+                "commands": webMusicQueue?.recentActivity() ?? [],
+            ] as [String: Any],
         ]
         let data = (try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted])) ?? Data("{}".utf8)
         return String(decoding: data, as: UTF8.self)
@@ -167,7 +176,7 @@ final class AppState: ObservableObject {
     /// Runs shorter than this get only the silent peek — you were probably
     /// watching that session anyway; banners are for runs you walked away from.
     static let longRunThreshold: TimeInterval = 45
-    private var runStarts: [String: Date] = [:]
+    var runStarts: [String: Date] = [:]  // internal for tests
 
     /// Whether an event earns a banner + sound, as opposed to a silent peek.
     static func shouldAlert(kind: EventKind, runDuration: TimeInterval, muted: Bool) -> Bool {
@@ -271,11 +280,30 @@ final class AppState: ObservableObject {
                                         message: e.message, updated: e.ts))
         }
         if e.kind == .attention { pendingAttention += 1 }
+        sortSessions()
+        if sessions.count > 12 { sessions.removeLast(sessions.count - 12) }
+    }
+
+    /// Attention first, then running, then finished — every path that changes
+    /// a card's kind must re-sort, or a dead card can sit in a visible slot
+    /// while a live one hides past the display cutoff.
+    private func sortSessions() {
         sessions.sort { a, b in
             let ra = Self.rank(a.kind), rb = Self.rank(b.kind)
             return ra == rb ? a.updated > b.updated : ra < rb
         }
-        if sessions.count > 12 { sessions.removeLast(sessions.count - 12) }
+    }
+
+    /// Bookkeeping for a card leaving the running/attention world outside
+    /// apply(): the run-start must not survive to poison a future resume's
+    /// duration (spurious long-run chime), and the list must re-rank.
+    private func demoteQuietly(at i: Int, message: String) {
+        if sessions[i].kind == .attention { pendingAttention = max(0, pendingAttention - 1) }
+        runStarts.removeValue(forKey: sessions[i].id)
+        sessions[i].kind = .done
+        sessions[i].message = message
+        sessions[i].updated = Date()
+        sortSessions()
     }
 
     private static func rank(_ k: EventKind) -> Int {
@@ -331,10 +359,7 @@ final class AppState: ObservableObject {
                 silent = now.timeIntervalSince(sessions[i].updated) > cutoff
             }
             guard silent else { continue }
-            if sessions[i].kind == .attention { pendingAttention = max(0, pendingAttention - 1) }
-            sessions[i].kind = .done
-            sessions[i].message = "lost contact"
-            sessions[i].updated = now
+            demoteQuietly(at: i, message: "lost contact")
             mutated = true
         }
         let before = sessions.count
@@ -432,10 +457,7 @@ final class AppState: ObservableObject {
             let sid = String(sessions[i].id.dropFirst(prefix.count))
             guard !sid.isEmpty, !present.contains(sid),
                   Date().timeIntervalSince(sessions[i].updated) > Self.registryOrphanGrace else { continue }
-            if sessions[i].kind == .attention { pendingAttention = max(0, pendingAttention - 1) }
-            sessions[i].kind = .done
-            sessions[i].message = "session ended"
-            sessions[i].updated = Date()
+            demoteQuietly(at: i, message: "session ended")
             mutated = true
         }
         // Drop long-finished sessions so the list stays live.
@@ -532,15 +554,14 @@ final class AppState: ObservableObject {
         let key = "\(host)#\(sessionId)"
         guard let i = sessions.firstIndex(where: { $0.id == key }) else { return }
         if sessions[i].kind == .running || sessions[i].kind == .attention {
-            // apply → upsert also settles the pendingAttention count.
-            let s = sessions[i]
-            apply(AgentEvent(kind: .done, host: host, project: s.project, sessionId: sessionId,
-                             sessionName: s.sessionName, message: "session ended",
-                             hook: "registry", image: nil, ts: Date()))
+            // A vanished session is bookkeeping, not an achievement — demote
+            // quietly. Routing these through apply() made them chime like
+            // real finishes: random Glass all day as terminals died.
+            demoteQuietly(at: i, message: "session ended")
         } else {
             sessions.remove(at: i)
-            refreshCollapsedFrame()
         }
+        refreshCollapsedFrame()
     }
 
     // MARK: - Music
@@ -557,8 +578,24 @@ final class AppState: ObservableObject {
     /// out of existence every time you click onto another display.
     private static let webMusicFreshness: TimeInterval = 90
 
+    /// Tabs running the pre-update script all report tab="" — one shared slot
+    /// meant a paused tab overwrote the playing tab's state every 2s and the
+    /// bar flapped (play/pause flicker, peek storms, wrong-tab pauses). Keyed
+    /// by title, each legacy tab gets its own slot too.
+    private func webKey(_ np: NowPlaying) -> String {
+        np.tab.isEmpty ? "legacy:\(np.title)" : np.tab
+    }
+
     func setWebNowPlaying(_ np: NowPlaying) {
-        webStates[np.tab] = (np, Date())
+        if np.tab.isEmpty, np.playing {
+            // A playing legacy report supersedes other playing legacy entries:
+            // a same-tab track change must land instantly, while a paused tab
+            // keeps its own slot and can't clobber the playing one.
+            webStates = webStates.filter { key, v in
+                !(key.hasPrefix("legacy:") && v.np.playing) || key == webKey(np)
+            }
+        }
+        webStates[webKey(np)] = (np, Date())
         composeNowPlaying(native: lastNative)
     }
 
@@ -575,7 +612,7 @@ final class AppState: ObservableObject {
         let now = Date()
         webStates = webStates.filter { now.timeIntervalSince($0.value.ts) < Self.webMusicFreshness }
         let playing = webStates.filter { $0.value.np.playing }
-        let sticky = nowPlaying.flatMap { cur in cur.isWeb ? playing[cur.tab]?.np : nil }
+        let sticky = nowPlaying.flatMap { cur in cur.isWeb ? playing[webKey(cur)]?.np : nil }
         let web = sticky
             ?? playing.values.max(by: { $0.ts < $1.ts })?.np
             ?? webStates.values.max(by: { $0.ts < $1.ts })?.np
@@ -600,6 +637,17 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// POST /music/commands lands here: with an explicit tab it queues raw
+    /// (diagnostics — prove delivery with a "noop"); without one it takes
+    /// exactly the path a button click takes.
+    func externalMusicCommand(_ cmd: String, tab: String?) {
+        if let tab {
+            webMusicQueue?.push(cmd, tab: tab)
+        } else {
+            musicControl(cmd)
+        }
+    }
+
     /// Click on the now-playing title: bring the player forward — the native
     /// app, or the exact tab that's playing (a targeted command the tab picks
     /// up, plus raising the browser itself).
@@ -620,8 +668,15 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Titles peeked recently — a title that leaves the bar and returns
+    /// within this window (two tabs trading places, throttled background
+    /// reports) is not a new song and must not peek again.
+    private var recentPeeks: [String: Date] = [:]
+    private static let peekEncore: TimeInterval = 180
+
     private func setNowPlaying(_ np: NowPlaying?) {
-        nowPlaying = np
+        // Reports arrive every 2s; identical state must not churn the UI.
+        if nowPlaying != np { nowPlaying = np }
         // Keyed off the last *announced* track, not the current value: a track
         // briefly going stale and coming back is not a new song, and must not
         // re-peek or re-fetch artwork.
@@ -642,7 +697,11 @@ final class AppState: ObservableObject {
                 }
             }.resume()
         }
-        if np.playing && !hudState.isOpen {
+        let lastPeek = recentPeeks[np.title]
+        if np.playing && !hudState.isOpen,
+           lastPeek.map({ Date().timeIntervalSince($0) > Self.peekEncore }) ?? true {
+            recentPeeks[np.title] = Date()
+            recentPeeks = recentPeeks.filter { Date().timeIntervalSince($0.value) < Self.peekEncore }
             show(.peek(.music(np)), autoCollapse: 4)
         }
     }
