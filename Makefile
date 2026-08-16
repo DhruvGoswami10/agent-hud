@@ -20,10 +20,12 @@ run: bundle
 hooks:
 	python3 bin/install-hooks.py "$(CURDIR)/bin/agent-hud-send"
 
-# App logic (Swift) + the hook/reporter scripts (Python). Run before pushing.
+# App logic (Swift), the hook/reporter scripts (Python) and the extension's
+# pacing policy (node). Run before pushing.
 test:
 	cd app && swift test
 	python3 tests/test_scripts.py
+	node tests/test_extension.mjs
 
 clean:
 	rm -rf app/.build dist

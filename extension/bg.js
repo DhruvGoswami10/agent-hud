@@ -6,9 +6,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const opts = msg.body
       ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(msg.body) }
       : {};
+    // ok mirrors the HTTP status, not merely "the body parsed": a 404 whose
+    // body happens to be JSON used to read as success, so the caller never
+    // backed off and hammered the HUD.
     fetch("http://127.0.0.1:48085" + msg.path, opts)
-      .then((r) => r.json())
-      .then((data) => sendResponse({ ok: true, data }))
+      .then((r) => r.json().catch(() => null).then((data) => ({ r, data })))
+      .then(({ r, data }) => sendResponse({ ok: r.ok, status: r.status, data }))
       .catch(() => sendResponse({ ok: false }));
     return true; // keep the message channel open for the async response
   }

@@ -50,9 +50,12 @@
 
   function run(cmd, video) {
     if (cmd === "focus") {
-      // Only the background worker can raise a tab.
+      // Only the background worker can raise a tab — and this needs no player.
       try { chrome.runtime.sendMessage({ type: "focusTab" }, () => { void chrome.runtime.lastError; }); } catch (e) {}
-    } else if (cmd === "playpause") {
+      return;
+    }
+    if (!video) return;
+    if (cmd === "playpause") {
       video.paused ? video.play() : video.pause();
     } else if (cmd === "next") {
       const b = document.querySelector(isMusic ? "ytmusic-player-bar .next-button" : ".ytp-next-button");
@@ -78,22 +81,39 @@
     });
   }
 
-  // Commands ride a long-poll: one request stays parked at the HUD and is
-  // answered the instant a button is pressed — click-to-audio without the
-  // poll gap. Fetches aren't throttled in background tabs, so this reaches
-  // long-paused tabs instantly too (timers wouldn't).
+  const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
+  // Commands ride a long-poll while this tab is in play: one request stays
+  // parked at the HUD and is answered the instant a button is pressed —
+  // click-to-audio without the poll gap. Fetches aren't throttled in
+  // background tabs, so this reaches paused tabs too (timers wouldn't).
+  // Pacing lives in HUDPolicy so it can be tested; see policy.js for why
+  // video-less pages never poll and idle tabs never park.
   async function commandLoop() {
     for (;;) {
       if (!chrome.runtime || !chrome.runtime.id) return; // orphaned after a reload
-      const r = await hud("/music/commands?tab=" + TAB + "&wait=1");
+      let video = document.querySelector("video");
+      const state = {
+        hasVideo: !!video,
+        playing: !!video && !video.paused && !video.ended,
+        lastPlayingAt: lastPlayingAt,
+        now: Date.now(),
+      };
+      if (!HUDPolicy.shouldPoll(state)) {
+        await sleep(2000);
+        continue;
+      }
+      const parked = HUDPolicy.shouldPark(state);
+      const r = await hud("/music/commands?tab=" + TAB + (parked ? "&wait=1" : ""));
       const cmds = (r && r.data && r.data.commands) || [];
-      const video = document.querySelector("video");
-      if (video && cmds.length) {
+      if (cmds.length) {
+        // The player can be swapped out during a 20s park (SPA navigation).
+        video = document.querySelector("video") || video;
         for (const cmd of cmds) run(cmd, video);
         lastPlayingAt = Date.now(); // user intent: this tab is relevant again
         await postState(video);     // immediate echo — the bar mustn't wait a beat
       }
-      if (!r || !r.ok) await new Promise((res) => setTimeout(res, 3000)); // HUD down: back off
+      await sleep(HUDPolicy.nextDelay(r, parked));
     }
   }
 
