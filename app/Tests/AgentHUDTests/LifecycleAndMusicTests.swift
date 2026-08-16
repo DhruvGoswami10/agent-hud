@@ -134,6 +134,39 @@ final class StuckSessionTests: XCTestCase {
                        "cleanup is bookkeeping, not an announcement")
     }
 
+    /// THE random-chime bug: an unrecorded start used to count as an
+    /// infinitely long run, so any finish without a start rang the bell —
+    /// and starts vanish on every app restart.
+    func testFinishWithNoRecordedStartIsSilent() {
+        let now = Date()
+        // No .running was ever seen for this session (app restarted mid-run).
+        let unknown = AppState.runLength(start: nil, end: now)
+        XCTAssertEqual(unknown, 0, "unknown length must not read as infinite")
+        XCTAssertFalse(AppState.shouldAlert(kind: .done, runDuration: unknown, muted: false),
+                       "a finish we cannot measure must stay silent")
+        // A genuinely long run still earns its chime.
+        let long = AppState.runLength(start: now.addingTimeInterval(-120), end: now)
+        XCTAssertTrue(AppState.shouldAlert(kind: .done, runDuration: long, muted: false))
+    }
+
+    /// Sessions adopted silently at startup still need their start recorded,
+    /// or their first finish is unmeasurable — the other half of the bug.
+    func testSilentlyAdoptedSessionGetsARunStart() {
+        let s = AppState()
+        s.syncRegistry(host: "box", entries: [entry("S", status: "busy")])   // priming pass
+        XCTAssertNotNil(s.runStarts["box#S"], "adopted runs must still be timed")
+    }
+
+    /// A session that died and came back is a new run, and must be timed.
+    func testRevivedSessionGetsAFreshRunStart() {
+        let s = AppState()
+        s.syncRegistry(host: "box", entries: [entry("S", status: "busy")])
+        s.syncRegistry(host: "box", entries: [])                    // dies → quiet demote
+        XCTAssertNil(s.runStarts["box#S"])
+        s.syncRegistry(host: "box", entries: [entry("S", status: "busy", at: 2)])
+        XCTAssertNotNil(s.runStarts["box#S"], "a revived run is a new run")
+    }
+
     /// A quiet demote must clear the run-start, or the next resume of the
     /// same session id inherits an hours-old start time and a 5-second run
     /// fires the long-run chime — the exact class this cleanup exists to kill.

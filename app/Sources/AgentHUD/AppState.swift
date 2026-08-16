@@ -178,6 +178,21 @@ final class AppState: ObservableObject {
     static let longRunThreshold: TimeInterval = 45
     var runStarts: [String: Date] = [:]  // internal for tests
 
+    /// How long a run lasted. An unknown start means unknown length, which
+    /// must read as short: treating it as infinite made every finish without
+    /// a recorded start ring the bell, and starts are lost on app restart.
+    nonisolated static func runLength(start: Date?, end: Date) -> TimeInterval {
+        guard let start else { return 0 }
+        return max(0, end.timeIntervalSince(start))
+    }
+
+    /// Remember when a run began so its length can be judged at the end.
+    /// Every path that turns a card "running" must call this — the registry
+    /// paths included, or their finishes have no length to judge.
+    private func noteRunStart(_ key: String, at ts: Date = Date()) {
+        if runStarts[key] == nil { runStarts[key] = ts }
+    }
+
     /// Whether an event earns a banner + sound, as opposed to a silent peek.
     static func shouldAlert(kind: EventKind, runDuration: TimeInterval, muted: Bool) -> Bool {
         guard !muted else { return false }
@@ -194,10 +209,12 @@ final class AppState: ObservableObject {
         events.insert(event, at: 0)
         if events.count > 150 { events.removeLast(events.count - 150) }
 
-        if event.kind == .running, runStarts[event.sourceKey] == nil {
-            runStarts[event.sourceKey] = event.ts
-        }
-        let runDuration = runStarts[event.sourceKey].map { event.ts.timeIntervalSince($0) } ?? .infinity
+        if event.kind == .running { noteRunStart(event.sourceKey, at: event.ts) }
+        // An unknown start is NOT a long run. Treating it as infinite meant
+        // every finish without a recorded start rang the bell — and starts
+        // are lost on every app restart, so a relaunch turned ordinary
+        // three-second turns into chimes for the rest of the day.
+        let runDuration = Self.runLength(start: runStarts[event.sourceKey], end: event.ts)
         if event.kind == .done { runStarts.removeValue(forKey: event.sourceKey) }
 
         upsertSession(event)
@@ -483,6 +500,7 @@ final class AppState: ObservableObject {
             if sessions[i].kind == .done {
                 sessions[i].kind = .running
                 sessions[i].updated = Date()
+                noteRunStart(key)   // a revived run is a new run
                 refreshCollapsedFrame()
             }
             return
@@ -492,6 +510,9 @@ final class AppState: ObservableObject {
         if announce {
             apply(ev)
         } else {
+            // Silent adoption (sessions already running when the app started):
+            // still record the start, or their first finish can't be measured.
+            noteRunStart(key)
             upsertSession(ev)
             refreshCollapsedFrame()
         }
