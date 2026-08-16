@@ -175,6 +175,43 @@ final class StuckSessionTests: XCTestCase {
     }
 }
 
+/// The meters' reset column: it vanished the day a second account card
+/// appeared (compact mode hid it), and "58% of my week" is only actionable
+/// once you know whether it refills tonight or Tuesday.
+final class LimitResetLabelTests: XCTestCase {
+    private func at(_ y: Int, _ mo: Int, _ d: Int, _ h: Int, _ mi: Int) -> Date {
+        DateComponents(calendar: .current, year: y, month: mo, day: d,
+                       hour: h, minute: mi).date!
+    }
+
+    func testSameDayShowsTimeOnly() {
+        let now = at(2026, 8, 16, 9, 0)
+        XCTAssertEqual(limitResetLabel(at(2026, 8, 16, 14, 30), now: now), "resets 14:30")
+    }
+
+    func testLaterDayNamesTheDay() {
+        let now = at(2026, 8, 16, 9, 0)
+        let label = limitResetLabel(at(2026, 8, 18, 22, 0), now: now)
+        XCTAssertTrue(label.hasPrefix("resets "), label)
+        XCTAssertTrue(label.contains("22:00"), label)
+        XCTAssertGreaterThan(label.count, "resets 22:00".count, "a weekly cap must name its day")
+    }
+
+    /// A reset a few hours away but after midnight is tomorrow — the old
+    /// hour-threshold version called that "resets 02:00" with no day.
+    func testAfterMidnightStillNamesTheDay() {
+        let now = at(2026, 8, 16, 23, 0)
+        XCTAssertTrue(limitResetLabel(at(2026, 8, 17, 2, 0), now: now).contains(" "),
+                      "crossing midnight must not read as tonight")
+    }
+
+    func testPastAndMissingDates() {
+        let now = at(2026, 8, 16, 9, 0)
+        XCTAssertEqual(limitResetLabel(at(2026, 8, 16, 8, 0), now: now), "resetting…")
+        XCTAssertEqual(limitResetLabel(nil), "")
+    }
+}
+
 @MainActor
 final class ClipboardDedupeTests: XCTestCase {
     private func item(_ t: String) -> ClipboardItem {
@@ -286,6 +323,17 @@ final class CommandRoutingTests: XCTestCase {
         XCTAssertEqual(h.count, 2)
         XCTAssertTrue(h[0].contains("push playpause → t1"))
         XCTAssertTrue(h[1].contains("pop t1 ← playpause"))
+    }
+
+    /// The long-poll depends on push notifying the server so a parked
+    /// request can be answered the moment a button is pressed.
+    func testPushNotifiesForParkedPolls() {
+        let q = CommandQueue()
+        var notified: [String] = []
+        q.onPush = { notified.append($0) }
+        q.push("playpause", tab: "t1")
+        q.push("next")
+        XCTAssertEqual(notified, ["t1", ""])
     }
 
     /// The route switch matches bare paths — a query string used to 404.

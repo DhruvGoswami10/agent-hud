@@ -539,22 +539,16 @@ private struct MetersRow: View {
                 .font(.system(size: 10, weight: .bold, design: .rounded))
                 .foregroundStyle(item.isCritical ? color : .white.opacity(0.85))
                 .frame(width: 34, alignment: .trailing)
-            if !compact {
-                Text(Self.resetLabel(item.resetsAt))
-                    .font(.system(size: 8.5)).foregroundStyle(.white.opacity(0.35))
-                    .frame(width: 74, alignment: .trailing).lineLimit(1)
-            }
+            // Shown in every mode: "58% of my week" is only actionable once
+            // you know whether it resets tonight or on Tuesday. Cards stack
+            // vertically, so a second account costs no width — hiding this
+            // when one appeared was a regression, not a space saving.
+            Text(limitResetLabel(item.resetsAt))
+                .font(.system(size: 8.5)).foregroundStyle(.white.opacity(0.35))
+                .frame(width: 74, alignment: .trailing).lineLimit(1)
         }
     }
 
-    static func resetLabel(_ date: Date?) -> String {
-        guard let date else { return "" }
-        let seconds = date.timeIntervalSinceNow
-        guard seconds > 0 else { return "resetting…" }
-        let f = DateFormatter()
-        f.dateFormat = seconds < 20 * 3600 ? "HH:mm" : "EEE HH:mm"
-        return "resets \(f.string(from: date))"
-    }
 
     private var estimated: some View {
         HStack(spacing: 10) {

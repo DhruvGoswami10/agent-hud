@@ -13,6 +13,16 @@ func sessionDisplayName(_ name: String, project: String) -> String {
     return name
 }
 
+/// When a rate-limit window refills. Same-day resets show a time; anything
+/// further out names the day, so a weekly cap never reads as "tonight".
+func limitResetLabel(_ date: Date?, now: Date = Date()) -> String {
+    guard let date else { return "" }
+    guard date > now else { return "resetting…" }
+    let f = DateFormatter()
+    f.dateFormat = Calendar.current.isDate(date, inSameDayAs: now) ? "HH:mm" : "EEE HH:mm"
+    return "resets \(f.string(from: date))"
+}
+
 enum HostAliases {
     private(set) static var map: [String: String] = [:]
 

@@ -78,24 +78,35 @@
     });
   }
 
+  // Commands ride a long-poll: one request stays parked at the HUD and is
+  // answered the instant a button is pressed — click-to-audio without the
+  // poll gap. Fetches aren't throttled in background tabs, so this reaches
+  // long-paused tabs instantly too (timers wouldn't).
+  async function commandLoop() {
+    for (;;) {
+      if (!chrome.runtime || !chrome.runtime.id) return; // orphaned after a reload
+      const r = await hud("/music/commands?tab=" + TAB + "&wait=1");
+      const cmds = (r && r.data && r.data.commands) || [];
+      const video = document.querySelector("video");
+      if (video && cmds.length) {
+        for (const cmd of cmds) run(cmd, video);
+        lastPlayingAt = Date.now(); // user intent: this tab is relevant again
+        await postState(video);     // immediate echo — the bar mustn't wait a beat
+      }
+      if (!r || !r.ok) await new Promise((res) => setTimeout(res, 3000)); // HUD down: back off
+    }
+  }
+
+  // State reporting stays on a slow beat; idle background tabs go quiet so
+  // they can't clobber the active one — but they always keep listening.
   async function tick() {
     const video = document.querySelector("video");
     if (!video) return;
     const playing = !video.paused && !video.ended;
     if (playing) lastPlayingAt = Date.now();
-    // Idle background tabs stop REPORTING so they can't clobber the active
-    // one — but they must keep POLLING, or a long-paused tab goes deaf and
-    // its play button "does nothing".
     if (playing || Date.now() - lastPlayingAt <= 120000) await postState(video);
-
-    const r = await hud("/music/commands?tab=" + TAB);
-    const cmds = (r && r.data && r.data.commands) || [];
-    for (const cmd of cmds) run(cmd, video);
-    if (cmds.length) {
-      lastPlayingAt = Date.now(); // user intent: this tab is relevant again
-      await postState(video);     // immediate echo — the bar mustn't wait a beat
-    }
   }
 
   setInterval(tick, 2000);
+  commandLoop();
 })();

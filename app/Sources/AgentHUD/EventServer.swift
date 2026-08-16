@@ -11,6 +11,10 @@ final class CommandQueue {
     private var items: [(tab: String, cmd: String)] = []
     private var history: [String] = []
 
+    /// Fires after every push with the target tab — the server uses it to
+    /// answer a parked long-poll immediately instead of waiting to be asked.
+    var onPush: ((String) -> Void)?
+
     private static let clock: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss"
@@ -28,6 +32,7 @@ final class CommandQueue {
         if items.count > 8 { items.removeFirst(items.count - 8) }
         note("push \(c) → \(tab.isEmpty ? "legacy" : tab)")
         lock.unlock()
+        onPush?(tab)
     }
 
     /// Commands are addressed: a tab drains only its own (tab "" is the
@@ -62,6 +67,9 @@ final class EventServer {
     let musicCommands = CommandQueue()
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "agenthud.server")
+    /// Long-polls waiting for a command (server-queue confined). Answered the
+    /// instant a command is pushed — click-to-audio without the poll gap.
+    private var parked: [(tab: String, conn: NWConnection, timeout: DispatchWorkItem)] = []
     private let lock = NSLock()
     private var received = 0
     private var musicReceived = 0
@@ -79,6 +87,10 @@ final class EventServer {
     }
 
     func start() throws {
+        musicCommands.onPush = { [weak self] tab in
+            guard let self else { return }
+            self.queue.async { self.deliverParked(tab) }
+        }
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
         params.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!)
@@ -92,6 +104,17 @@ final class EventServer {
     func stop() {
         listener?.cancel()
         listener = nil
+        musicCommands.onPush = nil
+        // Answer anyone still parked rather than leaving their request to
+        // die on the wire — tabs treat a dropped poll as the HUD going away.
+        queue.async { [weak self] in
+            guard let self else { return }
+            for p in self.parked {
+                p.timeout.cancel()
+                self.respondCommands(p.conn, [])
+            }
+            self.parked.removeAll()
+        }
     }
 
     private func accept(_ conn: NWConnection) {
@@ -144,9 +167,27 @@ final class EventServer {
             ))
             respond(conn, status: "200 OK", body: #"{"ok":true}"#)
         case ("GET", "/music/commands"):
-            let cmds = musicCommands.pop(for: Self.queryValue(query, "tab") ?? "")
-            let json = (try? JSONSerialization.data(withJSONObject: ["commands": cmds])) ?? Data("{\"commands\":[]}".utf8)
-            respond(conn, status: "200 OK", body: String(decoding: json, as: UTF8.self))
+            let tab = Self.queryValue(query, "tab") ?? ""
+            let cmds = musicCommands.pop(for: tab)
+            // wait=1 opts into long-polling: an empty answer parks until a
+            // command lands or ~20s passes. Legacy clients keep instant
+            // empties, exactly as before.
+            if !cmds.isEmpty || Self.queryValue(query, "wait") == nil {
+                respondCommands(conn, cmds)
+            } else {
+                let timeout = DispatchWorkItem { [weak self] in
+                    guard let self else { return }
+                    self.parked.removeAll { $0.conn === conn }
+                    self.respondCommands(conn, [])
+                }
+                parked.append((tab, conn, timeout))
+                if parked.count > 16 {  // runaway guard: oldest answers empty
+                    let old = parked.removeFirst()
+                    old.timeout.cancel()
+                    respondCommands(old.conn, [])
+                }
+                queue.asyncAfter(deadline: .now() + 20, execute: timeout)
+            }
         case ("POST", "/music/commands"):
             // Same path as clicking the bar's buttons — scriptable controls,
             // and the way to prove command delivery when debugging.
@@ -216,6 +257,24 @@ final class EventServer {
         default:
             respond(conn, status: "404 Not Found", body: #"{"ok":false}"#)
         }
+    }
+
+    /// Answer every parked poll whose lane just received a command.
+    private func deliverParked(_ tab: String) {
+        var kept: [(tab: String, conn: NWConnection, timeout: DispatchWorkItem)] = []
+        for p in parked {
+            guard p.tab == tab else { kept.append(p); continue }
+            let cmds = musicCommands.pop(for: p.tab)
+            if cmds.isEmpty { kept.append(p); continue }
+            p.timeout.cancel()
+            respondCommands(p.conn, cmds)
+        }
+        parked = kept
+    }
+
+    private func respondCommands(_ conn: NWConnection, _ cmds: [String]) {
+        let json = (try? JSONSerialization.data(withJSONObject: ["commands": cmds])) ?? Data("{\"commands\":[]}".utf8)
+        respond(conn, status: "200 OK", body: String(decoding: json, as: UTF8.self))
     }
 
     private func respond(_ conn: NWConnection, status: String, body: String) {
