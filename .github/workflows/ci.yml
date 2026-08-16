@@ -1,0 +1,18 @@
+name: CI
+
+# Every push and PR runs the same suite as `make test` — the failures list on
+# the Actions tab is the "what needs fixing" report for the upload.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift tests
+        run: cd app && swift test
+      - name: Script tests
+        run: python3 tests/test_scripts.py

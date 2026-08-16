@@ -8,19 +8,24 @@ import Network
 /// poll GET /music/commands since the HUD can't reach into a web page.
 final class CommandQueue {
     private let lock = NSLock()
-    private var items: [String] = []
+    private var items: [(tab: String, cmd: String)] = []
 
-    func push(_ c: String) {
+    func push(_ c: String, tab: String = "") {
         lock.lock()
-        items.append(c)
+        items.append((tab, c))
         if items.count > 8 { items.removeFirst(items.count - 8) }
         lock.unlock()
     }
 
-    func popAll() -> [String] {
+    /// Commands are addressed: a tab drains only its own (tab "" is the
+    /// legacy untargeted lane), so with several players open one tab can't
+    /// steal another's button press — the old popAll() did exactly that.
+    func pop(for tab: String) -> [String] {
         lock.lock()
-        defer { items.removeAll(); lock.unlock() }
-        return items
+        defer { lock.unlock() }
+        let mine = items.filter { $0.tab == tab }.map(\.cmd)
+        items.removeAll { $0.tab == tab }
+        return mine
     }
 }
 
@@ -86,7 +91,9 @@ final class EventServer {
     }
 
     private func route(_ conn: NWConnection, _ req: (method: String, path: String, body: Data)) {
-        switch (req.method, req.path) {
+        // The switch matches bare paths; a query string must not 404 them.
+        let (path, query) = Self.splitTarget(req.path)
+        switch (req.method, path) {
         case ("OPTIONS", _):
             // CORS/Private-Network preflight for browser-extension content scripts.
             let head = "HTTP/1.1 204 No Content\r\n"
@@ -108,11 +115,12 @@ final class EventServer {
                 title: title,
                 artist: (obj["artist"] as? String) ?? "",
                 playing: (obj["playing"] as? Bool) ?? false,
-                artworkURL: (obj["artwork_url"] as? String) ?? ""
+                artworkURL: (obj["artwork_url"] as? String) ?? "",
+                tab: (obj["tab"] as? String) ?? ""
             ))
             respond(conn, status: "200 OK", body: #"{"ok":true}"#)
         case ("GET", "/music/commands"):
-            let cmds = musicCommands.popAll()
+            let cmds = musicCommands.pop(for: Self.queryValue(query, "tab") ?? "")
             let json = (try? JSONSerialization.data(withJSONObject: ["commands": cmds])) ?? Data("{\"commands\":[]}".utf8)
             respond(conn, status: "200 OK", body: String(decoding: json, as: UTF8.self))
         case ("POST", "/event"):
@@ -148,7 +156,11 @@ final class EventServer {
                     ctxUsed: (j["ctx_used"] as? Int) ?? 0,
                     lastIn: (j["last_in"] as? Int) ?? 0,
                     lastOut: (j["last_out"] as? Int) ?? 0,
-                    outcome: (j["outcome"] as? String) ?? ""
+                    outcome: (j["outcome"] as? String) ?? "",
+                    filesChanged: (j["files_changed"] as? Int) ?? 0,
+                    linesAdded: (j["lines_added"] as? Int) ?? 0,
+                    linesRemoved: (j["lines_removed"] as? Int) ?? 0,
+                    topFile: (j["top_file"] as? String) ?? ""
                 )
             }
             let usageObj = (obj["usage"] as? [String: Any]) ?? [:]
@@ -177,6 +189,19 @@ final class EventServer {
             + "Access-Control-Allow-Origin: *\r\n"
             + "Content-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n"
         conn.send(content: Data((head + body).utf8), completion: .contentProcessed { _ in conn.cancel() })
+    }
+
+    static func splitTarget(_ target: String) -> (path: String, query: String) {
+        guard let q = target.firstIndex(of: "?") else { return (target, "") }
+        return (String(target[..<q]), String(target[target.index(after: q)...]))
+    }
+
+    static func queryValue(_ query: String, _ key: String) -> String? {
+        for pair in query.split(separator: "&") {
+            let kv = pair.split(separator: "=", maxSplits: 1)
+            if kv.count == 2, kv[0] == key { return String(kv[1]) }
+        }
+        return nil
     }
 
     static func parseRequest(_ data: Data) -> (method: String, path: String, body: Data)? {

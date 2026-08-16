@@ -84,6 +84,26 @@ the box, run `install-hooks.py` there, and let `~/.ssh/config`'s
 
 `GET /health` → `{"ok":true,"received":N}`.
 
+The API is deliberately generic — Agent HUD is a notification surface for any
+long-running thing, not just AI. A build, a deploy, a big download:
+
+```sh
+make build && curl -s -X POST http://127.0.0.1:48085/event \
+  -H 'Content-Type: application/json' \
+  -d '{"event":"done","host":"Mac","project":"kernel","message":"build finished"}'
+```
+
+## Uninstall
+
+```sh
+make uninstall
+```
+
+Stops the app, removes both LaunchAgents, strips only the agent-hud hook
+entries from `~/.claude/settings.json` (with a timestamped backup), and clears
+`~/.cache/agent-hud`. Your sessions, transcripts, and the repo itself are
+untouched. Remote boxes: `pkill -f '[a]gent-hud-registry'` on each.
+
 ## Your machines
 
 Remote boxes live in `~/agent-hud/hosts.conf` (one IP/host or pattern per

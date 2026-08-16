@@ -31,9 +31,15 @@
     } catch (e) { /* extension reloading */ }
   }
 
+  // Heartbeat while streaming (~30s): a closed tab stops sending, and the
+  // HUD demotes silent web cards instead of showing "working" forever.
+  let lastBeat = 0;
   setInterval(() => {
     const g = isGenerating();
-    if (g && !generating) send("running", "generating…");
+    if (g && (!generating || Date.now() - lastBeat > 30000)) {
+      send("running", "generating…");
+      lastBeat = Date.now();
+    }
     if (!g && generating) send("done", "response finished");
     generating = g;
   }, 1000);

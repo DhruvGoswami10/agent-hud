@@ -15,6 +15,10 @@ struct LocalSessionEntry {
     var lastIn: Int = 0
     var lastOut: Int = 0
     var outcome: String = ""
+    var filesChanged: Int = 0
+    var linesAdded: Int = 0
+    var linesRemoved: Int = 0
+    var topFile: String = ""
 
     var isActive: Bool { status == "busy" || status == "shell" }
 }

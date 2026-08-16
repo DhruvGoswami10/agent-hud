@@ -1,0 +1,78 @@
+#!/bin/bash
+# Cleanly remove Agent HUD from this Mac: the app, its LaunchAgents, the
+# Claude Code hooks it added, and its caches. Leaves the repo itself, your
+# ~/.claude sessions/transcripts, and all backups untouched.
+#
+# Usage: bin/agent-hud-uninstall
+set -u
+
+echo "Agent HUD uninstall"
+
+# 1. Stop the app (this also takes the local registry reporter down with it).
+if pgrep -x AgentHUD >/dev/null 2>&1; then
+    killall AgentHUD 2>/dev/null && echo "· stopped AgentHUD.app"
+fi
+pkill -f "[a]gent-hud-registry" 2>/dev/null && echo "· stopped local registry reporter"
+pkill -f "[a]gent-hud-tunnels" 2>/dev/null && echo "· stopped tunnel keeper"
+
+# 2. LaunchAgents (login item + tunnel keeper).
+for label in dev.dhruv.agenthud.app dev.dhruv.agenthud.tunnels; do
+    plist="$HOME/Library/LaunchAgents/$label.plist"
+    if [ -f "$plist" ]; then
+        launchctl bootout "gui/$(id -u)/$label" 2>/dev/null
+        rm -f "$plist"
+        echo "· removed LaunchAgent $label"
+    fi
+done
+
+# 3. Claude Code hooks: strip only agent-hud-send entries, keep everything
+#    else, and back the file up first.
+python3 - <<'PY'
+import json, os, shutil, time
+
+path = os.path.expanduser("~/.claude/settings.json")
+if not os.path.exists(path):
+    raise SystemExit
+with open(path) as f:
+    settings = json.load(f)
+hooks = settings.get("hooks") or {}
+removed = 0
+for ev in list(hooks):
+    groups = hooks[ev]
+    kept = []
+    for g in groups:
+        inner = [h for h in g.get("hooks", []) if "agent-hud-send" not in h.get("command", "")]
+        removed += len(g.get("hooks", [])) - len(inner)
+        if inner:
+            g["hooks"] = inner
+            kept.append(g)
+    if kept:
+        hooks[ev] = kept
+    else:
+        del hooks[ev]
+if removed:
+    backup = "%s.bak-agenthud-uninstall-%s" % (path, time.strftime("%Y%m%d-%H%M%S"))
+    shutil.copy2(path, backup)
+    with open(path, "w") as f:
+        json.dump(settings, f, indent=2)
+        f.write("\n")
+    print("· removed %d hook entr%s (backup: %s)" % (removed, "y" if removed == 1 else "ies", backup))
+else:
+    print("· no agent-hud hooks found in ~/.claude/settings.json")
+PY
+
+# 4. Caches.
+rm -rf "$HOME/.cache/agent-hud" && echo "· removed ~/.cache/agent-hud"
+
+cat <<'EOF'
+
+Done on this Mac. Also, if you set them up:
+· Remote boxes: on each box run
+      pkill -f '[a]gent-hud-registry'
+  and re-run this script there to drop the hooks
+  (python3 is enough — only steps 3 applies remotely).
+· Browser extensions: remove "Agent HUD Bridge" from
+  chrome://extensions / Safari Settings → Extensions.
+· The repo itself and any dist/ builds are untouched — delete the
+  folder when you're ready.
+EOF

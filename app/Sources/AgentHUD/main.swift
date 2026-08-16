@@ -77,6 +77,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: path)
+        // Report under the canonical local label — gethostname() flips with
+        // network state (corporate DNS names) and would split this machine
+        // into two hosts.
+        var env = ProcessInfo.processInfo.environment
+        env["AGENT_HUD_HOST"] = "Mac"
+        p.environment = env
         p.standardInput = FileHandle.nullDevice
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice

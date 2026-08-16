@@ -1,7 +1,7 @@
 APP := dist/AgentHUD.app
 BIN := app/.build/release/AgentHUD
 
-.PHONY: build bundle run hooks test clean
+.PHONY: build bundle run hooks test clean uninstall
 
 build:
 	cd app && swift build -c release
@@ -27,3 +27,7 @@ test:
 
 clean:
 	rm -rf app/.build dist
+
+# Remove the app, LaunchAgents, hooks and caches from this Mac (repo stays).
+uninstall:
+	bash bin/agent-hud-uninstall

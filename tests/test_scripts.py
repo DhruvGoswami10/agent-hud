@@ -47,6 +47,16 @@ def assistant_line(text, ts=None, model="claude-fable-5", effort="max"):
     })
 
 
+def tool_use_line(name, inp):
+    """An assistant record containing one Edit/Write tool call."""
+    return json.dumps({
+        "type": "assistant",
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+        "message": {"model": "claude-fable-5",
+                    "content": [{"type": "tool_use", "name": name, "input": inp}]},
+    })
+
+
 class Fixture:
     """A throwaway ~/.claude with one session and one transcript."""
 
@@ -58,7 +68,9 @@ class Fixture:
         projects = os.path.join(self.home, ".claude", "projects", "-my-project")
         os.makedirs(sessions)
         os.makedirs(projects)
-        with open(os.path.join(sessions, "999.json"), "w") as f:
+        # Named with a pid that is genuinely alive (ours): the reporter now
+        # skips registry files whose process is dead.
+        with open(os.path.join(sessions, "%d.json" % os.getpid()), "w") as f:
             json.dump({
                 "sessionId": SESSION_ID,
                 "name": session_name if session_name is not None else auto_name(),
@@ -197,6 +209,33 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(s["last_in"], 115)
         self.assertEqual(s["last_out"], 20)
         self.assertEqual(s["outcome"], "finished")
+
+    def test_dead_pid_session_is_skipped(self):
+        """A killed terminal leaves its registry file behind still saying
+        'busy' — that must not read as a live session forever."""
+        fx = Fixture([assistant_line("x")])
+        self.addCleanup(fx.cleanup)
+        sessions = os.path.join(fx.home, ".claude", "sessions")
+        with open(os.path.join(sessions, "4194303.json"), "w") as f:
+            json.dump({"sessionId": "dead-dead-dead", "name": "ghost", "cwd": fx.cwd,
+                       "status": "busy", "updatedAt": int(time.time() * 1000)}, f)
+        snap = self.snapshot(fx)
+        self.assertEqual([s["sessionId"] for s in snap["sessions"]], [SESSION_ID])
+
+    def test_file_changes_are_reported(self):
+        fx = Fixture([
+            assistant_line("working"),
+            tool_use_line("Edit", {"file_path": "/p/App.swift",
+                                   "old_string": "a", "new_string": "x\ny\nz"}),
+            tool_use_line("Write", {"file_path": "/p/New.swift",
+                                    "content": "1\n2\n3\n4\n5"}),
+        ])
+        self.addCleanup(fx.cleanup)
+        s = self.snapshot(fx)["sessions"][0]
+        self.assertEqual(s["files_changed"], 2)
+        self.assertEqual(s["lines_added"], 8)
+        self.assertEqual(s["lines_removed"], 1)
+        self.assertEqual(s["top_file"], "New.swift")
 
     def test_interrupted_outcome_is_reported(self):
         fx = Fixture([assistant_line("partial"),

@@ -402,16 +402,28 @@ private struct OpenPanel: View {
 
     private func musicBar(_ np: NowPlaying) -> some View {
         HStack(spacing: 10) {
-            if let art = state.nowPlayingArt {
-                Thumb(image: art, side: 34)
-            } else {
-                IconBadge(symbol: "music.note", color: Color(red: 1, green: 0.45, blue: 0.6))
+            // Art + titles are a button: click brings the player forward —
+            // the native app, or the exact browser tab that's playing.
+            Button { state.musicFocus() } label: {
+                HStack(spacing: 10) {
+                    if let art = state.nowPlayingArt {
+                        Thumb(image: art, side: 34)
+                    } else {
+                        IconBadge(symbol: "music.note", color: Color(red: 1, green: 0.45, blue: 0.6))
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(np.title).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
+                        HStack(spacing: 4) {
+                            sourceMark(np, size: 9)
+                            Text(np.artist.isEmpty ? np.app : "\(np.artist) · \(np.app)")
+                                .font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
+                        }
+                    }
+                }
+                .contentShape(Rectangle())
             }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(np.title).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
-                Text("\(np.artist) · \(np.app)")
-                    .font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
-            }
+            .buttonStyle(.plain)
+            .help("Open the player")
             Spacer(minLength: 8)
             musicButton("backward.fill", size: 10) { state.musicControl("previous") }
             musicButton(np.playing ? "pause.fill" : "play.fill", size: 14) { state.musicControl("playpause") }
@@ -419,6 +431,30 @@ private struct OpenPanel: View {
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hudCard))
+    }
+
+    /// Where the sound is coming from, as a glyph — YouTube's play badge,
+    /// Spotify's rings, or a plain note for Apple Music.
+    @ViewBuilder
+    private func sourceMark(_ np: NowPlaying, size: CGFloat) -> some View {
+        switch np.app {
+        case "YouTube":
+            SVGShape(data: BrandPaths.youtube)
+                .fill(Color(red: 1.0, green: 0.23, blue: 0.19))
+                .frame(width: size + 1, height: size)
+        case "Spotify":
+            SVGShape(data: BrandPaths.spotify)
+                .fill(Color(red: 0.12, green: 0.84, blue: 0.38))
+                .frame(width: size, height: size)
+        case "Music":
+            Image(systemName: "music.note")
+                .font(.system(size: size - 1, weight: .semibold))
+                .foregroundStyle(Color(red: 0.98, green: 0.34, blue: 0.42))
+        default:
+            Image(systemName: "globe")
+                .font(.system(size: size - 1))
+                .foregroundStyle(.white.opacity(0.5))
+        }
     }
 
     private func musicButton(_ symbol: String, size: CGFloat, action: @escaping () -> Void) -> some View {
@@ -721,6 +757,31 @@ private struct DetailPane: View {
                 if !s.message.isEmpty {
                     Text(s.message).font(.system(size: 10)).foregroundStyle(.white.opacity(0.5)).lineLimit(3)
                 }
+                // The change receipt — what the session actually produced.
+                // Session scope, not per-turn: the counts cover the whole
+                // transcript, and the label must not pretend otherwise.
+                if s.filesChanged > 0 {
+                    Divider().overlay(.white.opacity(0.1))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("WHAT CHANGED · THIS SESSION")
+                            .font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.35)).kerning(0.8)
+                        HStack(spacing: 6) {
+                            Text("\(s.filesChanged) file\(s.filesChanged == 1 ? "" : "s")")
+                                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.white)
+                            Text("+\(s.linesAdded)")
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .foregroundStyle(EventKind.done.color)
+                            Text("−\(s.linesRemoved)")
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .foregroundStyle(Color(red: 1, green: 0.48, blue: 0.45))
+                        }
+                        if !s.topFile.isEmpty {
+                            Text("mostly \(s.topFile)")
+                                .font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
+                        }
+                    }
+                }
             } else {
                 Text("No session selected.").font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.4))
             }
@@ -776,6 +837,7 @@ private struct BurnStrip: View {
 
 private struct ClipChip: View {
     let item: ClipboardItem
+    @State private var copied = false
 
     var body: some View {
         Group {
@@ -792,6 +854,19 @@ private struct ClipChip: View {
                     .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.08)))
             }
         }
+        .overlay {
+            if copied {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.black.opacity(0.6))
+                    HStack(spacing: 3) {
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 10, weight: .bold))
+                        Text("Copied").font(.system(size: 9.5, weight: .semibold))
+                    }
+                    .foregroundStyle(EventKind.done.color)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.85)))
+            }
+        }
         .onTapGesture { copyBack() }
         .help("Click to copy again")
     }
@@ -803,6 +878,11 @@ private struct ClipChip: View {
             pb.writeObjects([img])
         } else {
             pb.setString(item.text, forType: .string)
+        }
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.85)) { copied = true }
+        Task {
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            withAnimation(.easeOut(duration: 0.25)) { copied = false }
         }
     }
 }

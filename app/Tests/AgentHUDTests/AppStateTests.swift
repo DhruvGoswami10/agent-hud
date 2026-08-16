@@ -42,13 +42,18 @@ final class AppStateTests: XCTestCase {
         }
     }
 
-    func testCopyingSameTextAgainAfterSomethingElsePeeks() {
+    /// Changed 2026-08-16: a re-copy of an older chip (usually a click on it)
+    /// moves it to the front instead of growing a duplicate, and doesn't peek
+    /// — you were looking right at the strip.
+    func testCopyingSameTextAgainMovesItForwardWithoutDuplicating() {
         let s = makeState()
         s.clipboardChanged(clip("a"))
         s.clipboardChanged(clip("b"))
         s.collapse()
         s.clipboardChanged(clip("a"))
-        XCTAssertEqual(s.clipboard.count, 3, "re-copying an older item is a real copy")
+        XCTAssertEqual(s.clipboard.count, 2, "identical content must not duplicate")
+        XCTAssertEqual(s.clipboard.first?.text, "a", "but it does move up")
+        XCTAssertTrue(s.hudState.isCollapsed, "and it isn't news worth a peek")
     }
 
     // MARK: - Music

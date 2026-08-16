@@ -1,11 +1,14 @@
 import AppKit
 
 struct NowPlaying: Equatable {
-    var app: String        // "Spotify" or "Music"
+    var app: String        // "Spotify", "Music", or a web source like "YouTube"
     var title: String
     var artist: String
     var playing: Bool
     var artworkURL: String // Spotify exposes one; Music doesn't
+    var tab: String = ""   // browser-tab identity, so commands reach the right player
+
+    var isWeb: Bool { app != "Spotify" && app != "Music" }
 }
 
 /// Polls Spotify / Apple Music via AppleScript (no private MediaRemote API —

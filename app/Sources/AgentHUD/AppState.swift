@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Combine
+import SystemConfiguration
 
 @MainActor
 final class AppState: ObservableObject {
@@ -63,13 +64,38 @@ final class AppState: ObservableObject {
     }
 
     enum Host {
-        static let local = String(ProcessInfo.processInfo.hostName.split(separator: ".").first ?? "mac")
+        /// Every local name form collapses to this one label. The Mac answers
+        /// to several names (hostname, LocalHostName, ComputerName) and DHCP
+        /// can swap the DNS one mid-day — without normalization the same
+        /// machine splits into two "hosts" with duplicate session cards.
+        static let canonicalLocal = "Mac"
 
-        /// Hostname casing differs between ProcessInfo and python's
-        /// socket.gethostname(), so compare case-insensitively.
-        static func isLocal(_ host: String) -> Bool {
-            host.caseInsensitiveCompare(local) == .orderedSame
+        private static var names: Set<String> = []
+        private static var namesAt = Date.distantPast
+
+        /// Refreshed rather than computed once: the hostname changes with
+        /// network state, and a name learned at launch can go stale.
+        static func localNames() -> Set<String> {
+            if Date().timeIntervalSince(namesAt) > 60 {
+                var s: Set<String> = [firstComponent(canonicalLocal)]
+                s.insert(firstComponent(ProcessInfo.processInfo.hostName))
+                var buf = [CChar](repeating: 0, count: 256)
+                if gethostname(&buf, buf.count) == 0 { s.insert(firstComponent(String(cString: buf))) }
+                if let n = SCDynamicStoreCopyLocalHostName(nil) as String? { s.insert(firstComponent(n)) }
+                if let n = SCDynamicStoreCopyComputerName(nil, nil) as String? { s.insert(firstComponent(n)) }
+                names = s
+                namesAt = Date()
+            }
+            return names
         }
+
+        private static func firstComponent(_ h: String) -> String {
+            (h.split(separator: ".").first.map(String.init) ?? h).lowercased()
+        }
+
+        static func isLocal(_ host: String) -> Bool { localNames().contains(firstComponent(host)) }
+
+        static func normalize(_ host: String) -> String { isLocal(host) ? canonicalLocal : host }
     }
 
     /// JSON snapshot for GET /debug — the observability we owe ourselves.
@@ -153,7 +179,8 @@ final class AppState: ObservableObject {
         }
     }
 
-    func apply(_ event: AgentEvent) {
+    func apply(_ rawEvent: AgentEvent) {
+        let event = rawEvent.with(host: Host.normalize(rawEvent.host))
         eventsReceived += 1
         events.insert(event, at: 0)
         if events.count > 150 { events.removeLast(events.count - 150) }
@@ -274,6 +301,19 @@ final class AppState: ObservableObject {
     /// tunnel or reporter; its "running" sessions are frozen ghosts.
     static let hostSilenceCutoff: TimeInterval = 90
 
+    /// Browser tabs never POST /sessions — they send transition events plus a
+    /// ~30s heartbeat while generating. A "web" card older than this belongs
+    /// to a closed or crashed tab.
+    static let webSilenceCutoff: TimeInterval = 150
+
+    /// Hook-only hosts with neither registry nor heartbeat: safety net so a
+    /// ghost can't hold the Mac awake forever, generous enough for real turns.
+    static let orphanSilenceCutoff: TimeInterval = 3600
+
+    /// A running/attention card whose session the host's own registry doesn't
+    /// list is an orphan (its terminal died); grace covers report races.
+    static let registryOrphanGrace: TimeInterval = 180
+
     /// Periodic self-healing: demote sessions from silent hosts (a dead
     /// tunnel must not hold the Mac awake all night), prune old finishes,
     /// and re-arm/retry the power assertion. Runs on a timer and on wake.
@@ -281,8 +321,16 @@ final class AppState: ObservableObject {
         var mutated = false
         for i in sessions.indices {
             guard sessions[i].kind == .running || sessions[i].kind == .attention else { continue }
-            guard let seen = hostLastReport[sessions[i].host],
-                  now.timeIntervalSince(seen) > Self.hostSilenceCutoff else { continue }
+            let silent: Bool
+            if let seen = hostLastReport[sessions[i].host] {
+                silent = now.timeIntervalSince(seen) > Self.hostSilenceCutoff
+            } else {
+                // Hosts that never report (web tabs, hook-only sources) are
+                // judged by the card's own last update instead.
+                let cutoff = sessions[i].host == "web" ? Self.webSilenceCutoff : Self.orphanSilenceCutoff
+                silent = now.timeIntervalSince(sessions[i].updated) > cutoff
+            }
+            guard silent else { continue }
             if sessions[i].kind == .attention { pendingAttention = max(0, pendingAttention - 1) }
             sessions[i].kind = .done
             sessions[i].message = "lost contact"
@@ -323,10 +371,11 @@ final class AppState: ObservableObject {
     static let limitsRetention: TimeInterval = 3600
 
     func syncRegistry(_ report: RegistryReport) {
-        syncRegistry(host: report.host, entries: report.entries,
+        let host = Host.normalize(report.host)
+        syncRegistry(host: host, entries: report.entries,
                      usage: report.usage, hours: report.hours)
         guard let limits = report.limits else { return }
-        hostAccount[report.host] = limits.key
+        hostAccount[host] = limits.key
         if limits.fetchedAt >= (limitsByAccount[limits.key]?.fetchedAt ?? .distantPast) {
             limitsByAccount[limits.key] = limits
         }
@@ -349,7 +398,8 @@ final class AppState: ObservableObject {
         limitsByAccount = limitsByAccount.filter { key, _ in byAccount[key] != nil }
     }
 
-    func syncRegistry(host: String, entries: [LocalSessionEntry], usage: [String: Int] = [:], hours: [Int: Int] = [:]) {
+    func syncRegistry(host rawHost: String, entries: [LocalSessionEntry], usage: [String: Int] = [:], hours: [Int: Int] = [:]) {
+        let host = Host.normalize(rawHost)
         hostLastReport[host] = Date()
         if !usage.isEmpty { hostUsage[host] = usage }
         if !hours.isEmpty { hostHours[host] = hours }
@@ -371,12 +421,29 @@ final class AppState: ObservableObject {
             }
         }
         registryActive[host] = activeNow
+        // Hook-created cards for sessions this host's own registry doesn't
+        // list (the terminal died before or between reports) must not stay
+        // "working" forever — the stuck-attention class of ghosts.
+        var mutated = false
+        let prefix = "\(host)#"
+        for i in sessions.indices {
+            guard sessions[i].id.hasPrefix(prefix),
+                  sessions[i].kind == .running || sessions[i].kind == .attention else { continue }
+            let sid = String(sessions[i].id.dropFirst(prefix.count))
+            guard !sid.isEmpty, !present.contains(sid),
+                  Date().timeIntervalSince(sessions[i].updated) > Self.registryOrphanGrace else { continue }
+            if sessions[i].kind == .attention { pendingAttention = max(0, pendingAttention - 1) }
+            sessions[i].kind = .done
+            sessions[i].message = "session ended"
+            sessions[i].updated = Date()
+            mutated = true
+        }
         // Drop long-finished sessions so the list stays live.
         let stale = sessions.contains { $0.kind == .done && Date().timeIntervalSince($0.updated) > 1800 }
         if stale {
             sessions.removeAll { $0.kind == .done && Date().timeIntervalSince($0.updated) > 1800 }
-            refreshCollapsedFrame()
         }
+        if mutated || stale { refreshCollapsedFrame() }
     }
 
     private func localSessionActive(_ e: LocalSessionEntry, host: String, announce: Bool) {
@@ -417,23 +484,35 @@ final class AppState: ObservableObject {
             sessions[i].lastIn = e.lastIn
             sessions[i].lastOut = e.lastOut
         }
+        if e.filesChanged > 0 {
+            sessions[i].filesChanged = e.filesChanged
+            sessions[i].linesAdded = e.linesAdded
+            sessions[i].linesRemoved = e.linesRemoved
+            sessions[i].topFile = e.topFile
+        }
     }
+
+    /// How long a status flip waits for a fresher snapshot before judging the
+    /// outcome. Shrunk by tests; 6s in production.
+    var finishVerdictDelay: TimeInterval = 6
 
     private func localSessionFinished(_ e: LocalSessionEntry, host: String) {
         let key = "\(host)#\(e.sessionId)"
+        // Attention counts too: a session that dies while waiting for approval
+        // must resolve rather than glow orange forever.
         guard let i = sessions.firstIndex(where: { $0.id == key }),
-              sessions[i].kind == .running else { return }
+              sessions[i].kind == .running || sessions[i].kind == .attention else { return }
         // Don't trust the outcome at the instant of the status flip — the
         // interrupt/error markers may not be flushed or rescanned yet. Wait
         // for a fresher snapshot, then judge. A hook Stop event landing in
         // the meantime wins (kind is no longer .running → we stay silent).
         pendingFinish[key]?.cancel()
-        pendingFinish[key] = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 6_000_000_000)
+        pendingFinish[key] = Task { [weak self, delay = finishVerdictDelay] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard let self, !Task.isCancelled else { return }
             self.pendingFinish[key] = nil
             guard let i = self.sessions.firstIndex(where: { $0.id == key }),
-                  self.sessions[i].kind == .running else { return }
+                  self.sessions[i].kind == .running || self.sessions[i].kind == .attention else { return }
             let fresh = self.latestEntries[key] ?? e
             let name = fresh.name.isEmpty ? self.sessions[i].sessionName : fresh.name
             let message: String
@@ -452,7 +531,8 @@ final class AppState: ObservableObject {
     private func localSessionGone(_ sessionId: String, host: String) {
         let key = "\(host)#\(sessionId)"
         guard let i = sessions.firstIndex(where: { $0.id == key }) else { return }
-        if sessions[i].kind == .running {
+        if sessions[i].kind == .running || sessions[i].kind == .attention {
+            // apply → upsert also settles the pendingAttention count.
             let s = sessions[i]
             apply(AgentEvent(kind: .done, host: host, project: s.project, sessionId: sessionId,
                              sessionName: s.sessionName, message: "session ended",
@@ -468,8 +548,8 @@ final class AppState: ObservableObject {
     /// Set by AppDelegate; commands for browser-based players queue here.
     var webMusicQueue: CommandQueue?
     private var lastNative: NowPlaying?
-    private var webNowPlaying: NowPlaying?
-    private var webNowPlayingTs = Date.distantPast
+    /// One state per browser tab — two playing tabs must not share a slot.
+    private var webStates: [String: (np: NowPlaying, ts: Date)] = [:]
     private var lastMusicTitle = ""
 
     /// Browsers throttle background-tab timers to roughly once a minute, so a
@@ -478,19 +558,27 @@ final class AppState: ObservableObject {
     private static let webMusicFreshness: TimeInterval = 90
 
     func setWebNowPlaying(_ np: NowPlaying) {
-        webNowPlaying = np
-        webNowPlayingTs = Date()
+        webStates[np.tab] = (np, Date())
         composeNowPlaying(native: lastNative)
     }
 
     /// Prefer whichever source is actually playing; native app wins ties.
+    /// Among several playing tabs the one already on the bar stays — two tabs
+    /// both reporting every 2s must not take turns flapping the title —
+    /// otherwise the freshest report wins.
     func composeNowPlaying(native: NowPlaying?) {
         lastNative = native
         guard musicEnabled else {
             setNowPlaying(nil)
             return
         }
-        let web = Date().timeIntervalSince(webNowPlayingTs) < Self.webMusicFreshness ? webNowPlaying : nil
+        let now = Date()
+        webStates = webStates.filter { now.timeIntervalSince($0.value.ts) < Self.webMusicFreshness }
+        let playing = webStates.filter { $0.value.np.playing }
+        let sticky = nowPlaying.flatMap { cur in cur.isWeb ? playing[cur.tab]?.np : nil }
+        let web = sticky
+            ?? playing.values.max(by: { $0.ts < $1.ts })?.np
+            ?? webStates.values.max(by: { $0.ts < $1.ts })?.np
         let pick: NowPlaying?
         if let n = native, n.playing {
             pick = n
@@ -504,11 +592,31 @@ final class AppState: ObservableObject {
 
     func musicControl(_ cmd: String) {
         guard let np = nowPlaying else { return }
-        if np.app == "Spotify" || np.app == "Music" {
+        if np.isWeb {
+            webMusicQueue?.push(cmd, tab: np.tab)
+        } else {
             let map = ["playpause": "playpause", "next": "next track", "previous": "previous track"]
             MusicWatcher.control(map[cmd] ?? cmd, app: np.app)
+        }
+    }
+
+    /// Click on the now-playing title: bring the player forward — the native
+    /// app, or the exact tab that's playing (a targeted command the tab picks
+    /// up, plus raising the browser itself).
+    func musicFocus() {
+        guard let np = nowPlaying else { return }
+        if np.isWeb {
+            webMusicQueue?.push("focus", tab: np.tab)
+            for bid in ["com.google.Chrome", "com.apple.Safari",
+                        "company.thebrowser.Browser", "com.microsoft.edgemac"] {
+                if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bid).first {
+                    app.activate(options: [])
+                    break
+                }
+            }
         } else {
-            webMusicQueue?.push(cmd)
+            let bid = np.app == "Spotify" ? "com.spotify.client" : "com.apple.Music"
+            NSRunningApplication.runningApplications(withBundleIdentifier: bid).first?.activate(options: [])
         }
     }
 
@@ -545,6 +653,14 @@ final class AppState: ObservableObject {
         // Identical content is a re-assert, not a new copy — see
         // clipboardSignature. Common when switching apps/displays.
         guard clipboard.first?.signature != item.signature else { return }
+        if let i = clipboard.firstIndex(where: { $0.signature == item.signature }) {
+            // Re-copy of an older chip (usually a click on it): move the
+            // existing item so its view — mid "Copied" flash — survives,
+            // and skip the peek; you were looking right at it.
+            let existing = clipboard.remove(at: i)
+            clipboard.insert(existing, at: 0)
+            return
+        }
         clipboard.insert(item, at: 0)
         if clipboard.count > 10 { clipboard.removeLast(clipboard.count - 10) }
         if expandOnCopy && !hudState.isOpen {

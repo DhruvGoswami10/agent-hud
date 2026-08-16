@@ -28,7 +28,10 @@ import urllib.request
 
 URL = os.environ.get("AGENT_HUD_URL", "http://127.0.0.1:48085")
 INTERVAL = float(os.environ.get("AGENT_HUD_REGISTRY_INTERVAL", "5"))
-HOST = socket.gethostname().split(".")[0]
+# The app spawns the local reporter with AGENT_HUD_HOST set: gethostname()
+# flips with network state (corporate DNS names) and would split one machine
+# into two hosts.
+HOST = os.environ.get("AGENT_HUD_HOST") or socket.gethostname().split(".")[0]
 
 try:
     _user = getpass.getuser()
@@ -155,6 +158,16 @@ def snapshot():
     for fn in files:
         if not fn.endswith(".json"):
             continue
+        # The registry file is named <pid>.json; a killed terminal leaves it
+        # behind still saying "busy", which reads as a live session forever.
+        pid = fn[:-5]
+        if pid.isdigit():
+            try:
+                os.kill(int(pid), 0)
+            except ProcessLookupError:
+                continue  # dead session, live-looking file
+            except Exception:
+                pass  # EPERM etc. = alive, just not ours
         try:
             with open(os.path.join(d, fn)) as f:
                 j = json.load(f)
@@ -171,8 +184,89 @@ def snapshot():
             "updatedAt": j.get("updatedAt") or 0,
         }
         row.update(session_stats(sid))
+        row.update(file_changes(sid))
         out.append(row)
     return out
+
+
+# --- what changed -------------------------------------------------------------
+# The change receipt: files the session touched with approximate +/- line
+# counts, aggregated from Edit/Write tool calls in the transcript. Incremental:
+# each transcript is parsed once from the start, then only new bytes.
+
+EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+_changes = {}  # sessionId -> {"offset": int, "files": {path: [added, removed]}}
+
+
+def _lines(s):
+    return s.count("\n") + 1 if s else 0
+
+
+def _count_tool_use(block, files):
+    if block.get("type") != "tool_use" or block.get("name") not in EDIT_TOOLS:
+        return
+    inp = block.get("input") or {}
+    path = inp.get("file_path") or inp.get("notebook_path") or ""
+    if not path:
+        return
+    add = rm = 0
+    name = block["name"]
+    if name == "Write":
+        add = _lines(inp.get("content") or "")
+    elif name == "Edit":
+        add = _lines(inp.get("new_string") or "")
+        rm = _lines(inp.get("old_string") or "")
+    elif name == "MultiEdit":
+        for e in inp.get("edits") or []:
+            add += _lines(e.get("new_string") or "")
+            rm += _lines(e.get("old_string") or "")
+    elif name == "NotebookEdit":
+        add = _lines(inp.get("new_source") or "")
+    entry = files.setdefault(path, [0, 0])
+    entry[0] += add
+    entry[1] += rm
+
+
+def file_changes(sid):
+    path = transcript_for(sid)
+    if not path:
+        return {}
+    rec = _changes.setdefault(sid, {"offset": 0, "files": {}})
+    try:
+        size = os.path.getsize(path)
+        if size < rec["offset"]:  # rotated/truncated: start over
+            rec["offset"], rec["files"] = 0, {}
+        if size > rec["offset"]:
+            with open(path, "rb") as f:
+                f.seek(rec["offset"])
+                offset = f.tell()
+                for line in f:
+                    if not line.endswith(b"\n"):
+                        break  # partial write; resume here next round
+                    offset = f.tell()
+                    if b'"tool_use"' not in line:
+                        continue
+                    try:
+                        j = json.loads(line)
+                    except Exception:
+                        continue
+                    if j.get("type") != "assistant":
+                        continue
+                    for block in (j.get("message") or {}).get("content") or []:
+                        _count_tool_use(block, rec["files"])
+                rec["offset"] = offset
+    except Exception:
+        return {}
+    files = rec["files"]
+    if not files:
+        return {}
+    top = max(files.items(), key=lambda kv: kv[1][0] + kv[1][1])
+    return {
+        "files_changed": len(files),
+        "lines_added": sum(v[0] for v in files.values()),
+        "lines_removed": sum(v[1] for v in files.values()),
+        "top_file": os.path.basename(top[0]),
+    }
 
 
 # --- account-usage estimation (ccusage-style) ---------------------------------

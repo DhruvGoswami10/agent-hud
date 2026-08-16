@@ -4,6 +4,11 @@
 (() => {
   let lastPlayingAt = 0;
 
+  // Stable per-tab identity: the HUD keeps one state per tab and addresses
+  // commands to the tab that owns the bar, so two open players can't steal
+  // each other's button presses.
+  const TAB = Math.random().toString(36).slice(2) + Date.now().toString(36);
+
   const isMusic = location.hostname === "music.youtube.com";
 
   function videoId() {
@@ -44,7 +49,10 @@
   }
 
   function run(cmd, video) {
-    if (cmd === "playpause") {
+    if (cmd === "focus") {
+      // Only the background worker can raise a tab.
+      try { chrome.runtime.sendMessage({ type: "focusTab" }, () => { void chrome.runtime.lastError; }); } catch (e) {}
+    } else if (cmd === "playpause") {
       video.paused ? video.play() : video.pause();
     } else if (cmd === "next") {
       const b = document.querySelector(isMusic ? "ytmusic-player-bar .next-button" : ".ytp-next-button");
@@ -72,9 +80,10 @@
       artist: channelName(),
       playing,
       artwork_url: id ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : "",
+      tab: TAB,
     });
 
-    const r = await hud("/music/commands");
+    const r = await hud("/music/commands?tab=" + TAB);
     for (const cmd of (r && r.data && r.data.commands) || []) run(cmd, video);
   }
 

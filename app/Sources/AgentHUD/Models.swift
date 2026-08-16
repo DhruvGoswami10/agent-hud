@@ -79,6 +79,13 @@ struct AgentEvent: Identifiable {
     }
     var sourceKey: String { "\(host)#\(sessionId.isEmpty ? project : sessionId)" }
 
+    /// Same event under a different host label — used to canonicalize the
+    /// local machine's several names into one identity at ingestion.
+    func with(host newHost: String) -> AgentEvent {
+        AgentEvent(kind: kind, host: newHost, project: project, sessionId: sessionId,
+                   sessionName: sessionName, message: message, hook: hook, image: image, ts: ts)
+    }
+
     static func from(json: [String: Any]) -> AgentEvent? {
         guard let raw = json["event"] as? String, let kind = EventKind(rawValue: raw) else { return nil }
         var image: NSImage? = nil
@@ -118,6 +125,10 @@ struct SessionInfo: Identifiable {
     var ctxLimit: Int = 200_000
     var lastIn: Int = 0
     var lastOut: Int = 0
+    var filesChanged: Int = 0
+    var linesAdded: Int = 0
+    var linesRemoved: Int = 0
+    var topFile: String = ""
 
     /// Sessions on [1m] models exceed the standard 200k window; infer it.
     var effectiveCtxLimit: Int { ctxUsed > 220_000 ? 1_000_000 : ctxLimit }

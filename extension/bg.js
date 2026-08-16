@@ -12,4 +12,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch(() => sendResponse({ ok: false }));
     return true; // keep the message channel open for the async response
   }
+  if (msg && msg.type === "focusTab" && sender.tab) {
+    // Raise the tab that asked (a "focus" music command it pulled from the
+    // HUD) — content scripts can't do this themselves.
+    chrome.tabs.update(sender.tab.id, { active: true });
+    if (sender.tab.windowId !== undefined) {
+      chrome.windows.update(sender.tab.windowId, { focused: true });
+    }
+  }
 });

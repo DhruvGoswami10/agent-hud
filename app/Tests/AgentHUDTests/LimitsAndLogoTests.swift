@@ -99,7 +99,7 @@ final class LimitsSyncTests: XCTestCase {
         XCTAssertEqual(s.accountLimits.count, 2)
         XCTAssertEqual(Set(s.accountLimits.map(\.plan)), ["Max 20x", "Pro"])
         let work = s.accountLimits.first { $0.key == "work-uuid" }
-        XCTAssertEqual(work?.hosts, ["mac"], "each card names the machines using it")
+        XCTAssertEqual(work?.hosts, ["Mac"], "each card names the machines using it (local names normalize)")
     }
 
     /// After /logout + /login the machine reports a different account; the
@@ -120,7 +120,7 @@ final class LimitsSyncTests: XCTestCase {
             s.syncRegistry(report(host: host, fetchedAt: Date(), percent: 40))
         }
         XCTAssertEqual(s.accountLimits.count, 1)
-        XCTAssertEqual(s.accountLimits.first?.hosts, ["mac", "box6", "box54"])
+        XCTAssertEqual(s.accountLimits.first?.hosts, ["Mac", "box6", "box54"])
     }
 
     func testReportWithoutLimitsKeepsPrevious() {
