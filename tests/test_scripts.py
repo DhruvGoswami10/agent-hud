@@ -70,7 +70,8 @@ class Fixture:
         os.makedirs(projects)
         # Named with a pid that is genuinely alive (ours): the reporter now
         # skips registry files whose process is dead.
-        with open(os.path.join(sessions, "%d.json" % os.getpid()), "w") as f:
+        self.session_file = os.path.join(sessions, "%d.json" % os.getpid())
+        with open(self.session_file, "w") as f:
             json.dump({
                 "sessionId": SESSION_ID,
                 "name": session_name if session_name is not None else auto_name(),
@@ -257,7 +258,7 @@ class RegistryTests(unittest.TestCase):
     def test_stale_sessions_are_skipped(self):
         fx = Fixture([assistant_line("old")])
         self.addCleanup(fx.cleanup)
-        path = os.path.join(fx.home, ".claude", "sessions", "999.json")
+        path = fx.session_file
         with open(path) as f:
             data = json.load(f)
         data["updatedAt"] = int((time.time() - 3 * 86400) * 1000)
