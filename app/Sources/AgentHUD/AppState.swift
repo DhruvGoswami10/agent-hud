@@ -627,10 +627,23 @@ final class AppState: ObservableObject {
         setNowPlaying(pick)
     }
 
+    /// The click-to-icon promise: browser tabs pull commands and report state
+    /// on their own (throttled) clock, so a playpause click flips the bar
+    /// immediately and real reports reconcile it — otherwise the icon froze,
+    /// people clicked again, and the extra toggles paused/played at random.
+    private var optimisticPlay: (title: String, value: Bool, until: Date)?
+
     func musicControl(_ cmd: String) {
         guard let np = nowPlaying else { return }
         if np.isWeb {
             webMusicQueue?.push(cmd, tab: np.tab)
+            if cmd == "playpause" {
+                let target = !np.playing
+                optimisticPlay = (np.title, target, Date().addingTimeInterval(8))
+                var flipped = np
+                flipped.playing = target
+                nowPlaying = flipped
+            }
         } else {
             let map = ["playpause": "playpause", "next": "next track", "previous": "previous track"]
             MusicWatcher.control(map[cmd] ?? cmd, app: np.app)
@@ -674,7 +687,15 @@ final class AppState: ObservableObject {
     private var recentPeeks: [String: Date] = [:]
     private static let peekEncore: TimeInterval = 180
 
-    private func setNowPlaying(_ np: NowPlaying?) {
+    private func setNowPlaying(_ incoming: NowPlaying?) {
+        var np = incoming
+        if let o = optimisticPlay {
+            if Date() > o.until || (np?.title == o.title && np?.playing == o.value) {
+                optimisticPlay = nil  // the tab confirmed, or the promise expired
+            } else if np?.title == o.title, np?.isWeb == true {
+                np?.playing = o.value  // hold the promise while the command travels
+            }
+        }
         // Reports arrive every 2s; identical state must not churn the UI.
         if nowPlaying != np { nowPlaying = np }
         // Keyed off the last *announced* track, not the current value: a track

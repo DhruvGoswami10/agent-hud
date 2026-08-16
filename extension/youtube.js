@@ -64,27 +64,37 @@
     }
   }
 
-  async function tick() {
-    const video = document.querySelector("video");
+  async function postState(video) {
     const title = cleanTitle();
-    if (!video || !title) return;
-    const playing = !video.paused && !video.ended;
-    if (playing) lastPlayingAt = Date.now();
-    // Idle background tabs stay silent so they don't clobber the active one.
-    if (!playing && Date.now() - lastPlayingAt > 120000) return;
-
+    if (!title) return;
     const id = videoId();
     await hud("/music/state", {
       source: "YouTube",
       title,
       artist: channelName(),
-      playing,
+      playing: !video.paused && !video.ended,
       artwork_url: id ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : "",
       tab: TAB,
     });
+  }
+
+  async function tick() {
+    const video = document.querySelector("video");
+    if (!video) return;
+    const playing = !video.paused && !video.ended;
+    if (playing) lastPlayingAt = Date.now();
+    // Idle background tabs stop REPORTING so they can't clobber the active
+    // one — but they must keep POLLING, or a long-paused tab goes deaf and
+    // its play button "does nothing".
+    if (playing || Date.now() - lastPlayingAt <= 120000) await postState(video);
 
     const r = await hud("/music/commands?tab=" + TAB);
-    for (const cmd of (r && r.data && r.data.commands) || []) run(cmd, video);
+    const cmds = (r && r.data && r.data.commands) || [];
+    for (const cmd of cmds) run(cmd, video);
+    if (cmds.length) {
+      lastPlayingAt = Date.now(); // user intent: this tab is relevant again
+      await postState(video);     // immediate echo — the bar mustn't wait a beat
+    }
   }
 
   setInterval(tick, 2000);

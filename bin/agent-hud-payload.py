@@ -102,13 +102,21 @@ def main():
     if not kind:
         return
 
-    # Claude Code fires Notification both for real permission prompts AND for
-    # "waiting for your input" idle pings ~60s after every turn. The latter is
-    # not news — you already saw the turn finish — so drop it entirely.
+    # Claude Code fires Notification for real permission prompts, for
+    # "waiting for your input" idle pings ~60s after every turn, AND for
+    # purely informational notices ("Claude Code login successful", update
+    # notes, …). Only genuinely actionable ones may arm the orange
+    # needs-you state — an informational notice stuck a Review button on a
+    # session for a whole turn. Idle pings stay dropped; the rest demote to
+    # info (visible in the feed, no glow, no banner).
     if ev == "Notification":
         text = ((d.get("message") or "") + " " + (d.get("title") or "")).lower()
         if "waiting for your input" in text or "waiting for input" in text:
             return
+        actionable = ("permission" in text or "approval" in text
+                      or "waiting" in text or "needs you" in text)
+        if not actionable:
+            kind = "info"
 
     transcript = d.get("transcript_path")
     msg, title = "", ""

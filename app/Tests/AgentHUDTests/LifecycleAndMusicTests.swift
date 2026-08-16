@@ -237,6 +237,23 @@ final class WebMusicArbitrationTests: XCTestCase {
         XCTAssertEqual(s.nowPlaying?.playing, true)
     }
 
+    /// A playpause click must flip the bar instantly and survive the stale
+    /// in-flight report — the frozen icon made people click repeatedly, and
+    /// the extra toggles paused/played the tab at random.
+    func testPauseClickFlipsTheBarImmediately() {
+        let s = AppState()
+        s.webMusicQueue = CommandQueue()
+        s.setWebNowPlaying(np("Song", tab: "t1", playing: true))
+        s.musicControl("playpause")
+        XCTAssertEqual(s.nowPlaying?.playing, false, "no waiting for the tab's next poll")
+        s.setWebNowPlaying(np("Song", tab: "t1", playing: true))
+        XCTAssertEqual(s.nowPlaying?.playing, false, "a stale report must not undo the promise")
+        s.setWebNowPlaying(np("Song", tab: "t1", playing: false))
+        XCTAssertEqual(s.nowPlaying?.playing, false, "the tab's confirmation reconciles")
+        s.setWebNowPlaying(np("Song", tab: "t1", playing: true))
+        XCTAssertEqual(s.nowPlaying?.playing, true, "after reconciling, real state rules again")
+    }
+
     func testNativePlayerBeatsWebTabs() {
         let s = AppState()
         s.setWebNowPlaying(np("web", tab: "t1", playing: true))

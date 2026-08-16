@@ -123,6 +123,16 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual(ev["event"], "attention")
         self.assertIn("permission", ev["message"])
 
+    def test_informational_notification_is_not_attention(self):
+        """'Claude Code login successful' stuck an orange Review button on a
+        session for a whole turn — notices aren't approval requests."""
+        for msg in ["Claude Code login successful",
+                    "Auto-update installed, restart to apply"]:
+            ev = run_payload("Notification", self.fx, message=msg)
+            self.assertIsNotNone(ev, msg)
+            self.assertEqual(ev["event"], "info",
+                             "informational notice must not arm Review: %r" % msg)
+
     def test_unknown_hooks_are_ignored(self):
         self.assertIsNone(run_payload("PreToolUse", self.fx))
 
