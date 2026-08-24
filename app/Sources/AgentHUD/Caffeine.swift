@@ -25,10 +25,24 @@ final class Caffeine {
     enum Mode: Equatable { case off, system, display }
 
     private(set) var mode: Mode = .off
-    private(set) var assertionAlive = false
     private var assertionID = IOPMAssertionID(0)
+    /// When the current assertion was created. Derived rather than latched:
+    /// the assertion carries a 60s release timeout, so a missed renew (sleep,
+    /// a stalled run loop) silently retires it — a stored Bool then reported
+    /// a hold that powerd had already dropped, and the "re-arm after wake"
+    /// path short-circuited on that lie and never re-created anything.
+    private var assertionCreatedAt: Date?
+    /// The user-activity assertion from relightDisplay(). Kept so it can be
+    /// released: passing a throwaway local meant every manual hold leaked a
+    /// one-hour UserIsActive assertion that outlived the toggle.
+    private var userActivityID = IOPMAssertionID(0)
     private var timer: Timer?
     private var promptedForAccessibility = false
+
+    var assertionAlive: Bool {
+        guard let created = assertionCreatedAt else { return false }
+        return Date().timeIntervalSince(created) < Self.assertionTimeout
+    }
 
     nonisolated static let assertionTimeout: TimeInterval = 60
     nonisolated static let renewInterval: TimeInterval = 15
@@ -73,18 +87,25 @@ final class Caffeine {
         let result = IOPMAssertionCreateWithProperties(props as CFDictionary, &id)
         if result == kIOReturnSuccess {
             assertionID = id
-            assertionAlive = true
+            assertionCreatedAt = Date()
         } else {
             NSLog("AgentHUD: power assertion creation FAILED (\(result)) for mode \(mode)")
-            assertionAlive = false
+            assertionCreatedAt = nil
         }
         return assertionAlive
     }
 
     private func releaseAssertion() {
-        if assertionAlive {
+        if assertionCreatedAt != nil {
             IOPMAssertionRelease(assertionID)
-            assertionAlive = false
+            assertionCreatedAt = nil
+        }
+        // The relight assertion belongs to the display hold; when that hold
+        // ends it must go too, or it keeps the Mac up for an hour after the
+        // toggle is off.
+        if userActivityID != IOPMAssertionID(0) {
+            IOPMAssertionRelease(userActivityID)
+            userActivityID = IOPMAssertionID(0)
         }
     }
 
@@ -109,9 +130,12 @@ final class Caffeine {
 
     /// Turn an already-dark display back on when the hold engages
     /// (equivalent to `caffeinate -u`).
+    /// Apple's contract for this out-parameter is to pass back the id you got
+    /// last time; a fresh local each call created a new hour-long assertion
+    /// every time and left the old one holding.
     private func relightDisplay() {
-        var id = IOPMAssertionID(0)
-        IOPMAssertionDeclareUserActivity("Agent HUD manual hold" as CFString, kIOPMUserActiveLocal, &id)
+        IOPMAssertionDeclareUserActivity("Agent HUD manual hold" as CFString,
+                                         kIOPMUserActiveLocal, &userActivityID)
     }
 
     /// The screen saver and idle auto-lock trigger off HIDIdleTime, which
