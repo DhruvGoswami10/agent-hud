@@ -37,6 +37,100 @@ final class AppState: ObservableObject {
     }
     @Published var muted: Bool { didSet { UserDefaults.standard.set(muted, forKey: "muted") } }
 
+    // MARK: - Timing & behaviour preferences (Settings window)
+
+    /// How long each kind of slide-out stays before retracting on its own.
+    /// These were hard-coded; a peek that lands mid-thought needs to be
+    /// short by preference, not by argument.
+    @Published var attentionPeekSeconds: Double { didSet { UserDefaults.standard.set(attentionPeekSeconds, forKey: "attentionPeekSeconds") } }
+    @Published var donePeekSeconds: Double { didSet { UserDefaults.standard.set(donePeekSeconds, forKey: "donePeekSeconds") } }
+    @Published var clipboardPeekSeconds: Double { didSet { UserDefaults.standard.set(clipboardPeekSeconds, forKey: "clipboardPeekSeconds") } }
+    @Published var musicPeekSeconds: Double { didSet { UserDefaults.standard.set(musicPeekSeconds, forKey: "musicPeekSeconds") } }
+    /// Grace between the pointer leaving the HUD and it retracting. The old
+    /// hard-coded 0.15s made the panel feel like it was running away.
+    @Published var hoverCollapseDelay: Double { didSet { UserDefaults.standard.set(hoverCollapseDelay, forKey: "hoverCollapseDelay") } }
+    /// Show a dim resting indicator when nothing is happening, instead of the
+    /// notch going completely invisible.
+    @Published var alwaysShowIndicator: Bool {
+        didSet {
+            UserDefaults.standard.set(alwaysShowIndicator, forKey: "alwaysShowIndicator")
+            refreshCollapsedFrame()
+        }
+    }
+    @Published var dismissHotKeyEnabled: Bool { didSet { UserDefaults.standard.set(dismissHotKeyEnabled, forKey: "dismissHotKeyEnabled") } }
+    @Published var clickPeekDismisses: Bool { didSet { UserDefaults.standard.set(clickPeekDismisses, forKey: "clickPeekDismisses") } }
+    /// Whether moving the pointer onto a slide-out grows it into the full
+    /// panel. Off by default: reaching for a slide-out to dismiss it meant
+    /// the panel expanded under the cursor before the click ever landed, so
+    /// "click to dismiss" was unreachable in practice. Hovering the collapsed
+    /// notch still opens the panel either way.
+    @Published var hoverExpandsPeek: Bool { didSet { UserDefaults.standard.set(hoverExpandsPeek, forKey: "hoverExpandsPeek") } }
+
+    /// Manual hold keeps the screen lit (and defeats the lock). Off makes a
+    /// manual hold system-only — the Amphetamine "allow display sleep" case.
+    @Published var keepScreenOn: Bool {
+        didSet {
+            UserDefaults.standard.set(keepScreenOn, forKey: "keepScreenOn")
+            updateCaffeine()
+        }
+    }
+    /// When a manual hold should end. nil = indefinite (the old behaviour).
+    @Published private(set) var keepAwakeUntil: Date?
+    @Published var autoUpdateCheck: Bool { didSet { UserDefaults.standard.set(autoUpdateCheck, forKey: "autoUpdateCheck") } }
+
+    /// Mirrors what the OS reports, refreshed after every change — the user
+    /// can revoke this in System Settings and we must not claim otherwise.
+    @Published private(set) var openAtLogin = false
+    @Published private(set) var loginItemProblem: String?
+
+    /// macOS is refusing to show our banners. Worth surfacing loudly: the
+    /// sound and the banner are separate channels, so a denied permission
+    /// produced chimes with nothing on screen to explain them.
+    @Published private(set) var notificationsBlocked = false
+    @Published private(set) var notificationPermission = "not checked"
+
+    func refreshNotificationStatus() {
+        notificationPermission = Notifier.shared.status
+        notificationsBlocked = systemNotifications && !Notifier.shared.canPost
+    }
+
+    /// Deep-link into the Notifications pane so the fix is one click away.
+    func openNotificationSettings() {
+        let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications")!
+        NSWorkspace.shared.open(url)
+    }
+
+    func setOpenAtLogin(_ on: Bool) {
+        loginItemProblem = LoginItem.set(on)
+        openAtLogin = LoginItem.isEnabled
+    }
+
+    func refreshLoginItem() { openAtLogin = LoginItem.isEnabled }
+
+    /// Start (or extend) the manual hold. `minutes == 0` means indefinite.
+    func holdAwake(minutes: Int) {
+        keepAwakeUntil = minutes > 0 ? Date().addingTimeInterval(Double(minutes) * 60) : nil
+        keepAwake = true
+    }
+
+    func releaseAwakeHold() {
+        keepAwakeUntil = nil
+        keepAwake = false
+    }
+
+    /// Whether a timed manual hold has run out. An indefinite hold (nil
+    /// deadline) never expires — that is what "indefinitely" means.
+    nonisolated static func holdExpired(keepAwake: Bool, until: Date?, now: Date) -> Bool {
+        guard keepAwake, let until else { return false }
+        return now >= until
+    }
+
+    /// Remaining manual hold, for the menu title and the settings window.
+    var awakeRemaining: TimeInterval? {
+        guard keepAwake, let until = keepAwakeUntil else { return nil }
+        return max(0, until.timeIntervalSinceNow)
+    }
+
     @Published private(set) var nowPlaying: NowPlaying?
     @Published private(set) var nowPlayingArt: NSImage?
     @Published private(set) var nowPlayingArtColor: NSColor?
@@ -110,8 +204,28 @@ final class AppState: ObservableObject {
             ["name": sessionDisplayName(s.sessionName, project: s.project),
              "host": s.host, "kind": s.kind.rawValue]
         }
+        let hud: String
+        switch hudState {
+        case .collapsed: hud = "collapsed"
+        case .peek: hud = "peek"
+        case .open: hud = "open"
+        }
         let obj: [String: Any] = [
             "events": evs, "sessions": sess,
+            "hud": ["stage": hud, "hovering": hovering,
+                    "aggregate": aggregate.rawValue] as [String: Any],
+            "notifications": [
+                "permission": Notifier.shared.status,
+                "canPost": Notifier.shared.canPost,
+                "delivered": Notifier.shared.deliveredCount,
+                "suppressed": Notifier.shared.suppressedCount,
+                "enabledInApp": systemNotifications,
+                "soundsInApp": sounds,
+            ] as [String: Any],
+            "alerts": alertLog.prefix(25).map { r -> [String: String] in
+                ["t": fmt.string(from: r.ts), "kind": r.kind.rawValue, "hook": r.hook,
+                 "label": r.label, "chimed": r.alerted ? "yes" : "no", "why": r.reason]
+            },
             "muted": muted, "banners": systemNotifications, "sounds": sounds,
             "awake": ["reason": awakeReason, "active": awakeActive,
                       "assertionAlive": Caffeine.shared.assertionAlive,
@@ -155,6 +269,18 @@ final class AppState: ObservableObject {
         keepAwake = d.object(forKey: "keepAwake") as? Bool ?? false
         autoAwake = d.object(forKey: "autoAwake") as? Bool ?? true
         muted = d.object(forKey: "muted") as? Bool ?? false
+        attentionPeekSeconds = d.object(forKey: "attentionPeekSeconds") as? Double ?? 30
+        donePeekSeconds = d.object(forKey: "donePeekSeconds") as? Double ?? 7
+        clipboardPeekSeconds = d.object(forKey: "clipboardPeekSeconds") as? Double ?? 3.5
+        musicPeekSeconds = d.object(forKey: "musicPeekSeconds") as? Double ?? 4
+        hoverCollapseDelay = d.object(forKey: "hoverCollapseDelay") as? Double ?? 0.6
+        alwaysShowIndicator = d.object(forKey: "alwaysShowIndicator") as? Bool ?? false
+        dismissHotKeyEnabled = d.object(forKey: "dismissHotKeyEnabled") as? Bool ?? true
+        clickPeekDismisses = d.object(forKey: "clickPeekDismisses") as? Bool ?? true
+        hoverExpandsPeek = d.object(forKey: "hoverExpandsPeek") as? Bool ?? false
+        keepScreenOn = d.object(forKey: "keepScreenOn") as? Bool ?? true
+        autoUpdateCheck = d.object(forKey: "autoUpdateCheck") as? Bool ?? true
+        openAtLogin = LoginItem.isEnabled
         updateCaffeine()
     }
 
@@ -193,6 +319,39 @@ final class AppState: ObservableObject {
         if runStarts[key] == nil { runStarts[key] = ts }
     }
 
+    /// Why each recent event did or didn't chime. "Random chimes" is only
+    /// diagnosable if the app can say what it thought it was doing.
+    struct AlertRecord {
+        let ts: Date
+        let label: String
+        let kind: EventKind
+        let hook: String
+        let runSeconds: TimeInterval
+        let alerted: Bool
+        let reason: String
+    }
+    private(set) var alertLog: [AlertRecord] = []
+
+    private func noteAlertDecision(_ e: AgentEvent, runDuration: TimeInterval, alerted: Bool) {
+        let reason: String
+        if muted {
+            reason = "muted"
+        } else {
+            switch e.kind {
+            case .attention: reason = "needs-you always alerts"
+            case .done:
+                reason = runDuration >= Self.longRunThreshold
+                    ? "run was \(Int(runDuration))s (≥ \(Int(Self.longRunThreshold))s)"
+                    : "run was \(Int(runDuration))s (< \(Int(Self.longRunThreshold))s)"
+            case .running, .info: reason = "\(e.kind.rawValue) never alerts"
+            }
+        }
+        alertLog.insert(AlertRecord(ts: e.ts, label: e.label, kind: e.kind, hook: e.hook,
+                                    runSeconds: runDuration, alerted: alerted, reason: reason),
+                        at: 0)
+        if alertLog.count > 40 { alertLog.removeLast(alertLog.count - 40) }
+    }
+
     /// Whether an event earns a banner + sound, as opposed to a silent peek.
     static func shouldAlert(kind: EventKind, runDuration: TimeInterval, muted: Bool) -> Bool {
         guard !muted else { return false }
@@ -221,12 +380,14 @@ final class AppState: ObservableObject {
 
         if !hudState.isOpen {
             switch event.kind {
-            case .attention: show(.peek(.event(event)), autoCollapse: 30)
-            case .done: show(.peek(.event(event)), autoCollapse: 7)
+            case .attention: show(.peek(.event(event)), autoCollapse: attentionPeekSeconds)
+            case .done: show(.peek(.event(event)), autoCollapse: donePeekSeconds)
             case .running, .info: break  // your own prompt isn't news
             }
         }
-        if Self.shouldAlert(kind: event.kind, runDuration: runDuration, muted: muted) {
+        let alerted = Self.shouldAlert(kind: event.kind, runDuration: runDuration, muted: muted)
+        noteAlertDecision(event, runDuration: runDuration, alerted: alerted)
+        if alerted {
             Notifier.shared.post(for: event, enabled: systemNotifications)
             if sounds { Sound.play(for: event.kind) }
         }
@@ -254,8 +415,11 @@ final class AppState: ObservableObject {
     /// when reachability matters most.
     nonisolated static func desiredHold(keepAwake: Bool, autoAwake: Bool,
                                         running: Int, attention: Int,
-                                        lastBusyAge: TimeInterval?) -> Caffeine.Mode {
-        if keepAwake { return .display }
+                                        lastBusyAge: TimeInterval?,
+                                        keepScreenOn: Bool = true) -> Caffeine.Mode {
+        // A manual hold keeps the screen lit by default; turning that off
+        // makes it system-only, so the Mac stays up with a dark display.
+        if keepAwake { return keepScreenOn ? .display : .system }
         guard autoAwake else { return .off }
         if running > 0 || attention > 0 { return .system }
         if let age = lastBusyAge, age < autoLinger { return .system }
@@ -264,10 +428,18 @@ final class AppState: ObservableObject {
 
     func updateCaffeine() {
         let now = Date()
+        // A timed hold ends itself — the whole point of asking for 30 minutes
+        // rather than "on".
+        if Self.holdExpired(keepAwake: keepAwake, until: keepAwakeUntil, now: now) {
+            keepAwakeUntil = nil
+            keepAwake = false   // re-enters updateCaffeine via didSet
+            return
+        }
         if runningCount > 0 || attentionCount > 0 { lastBusyAt = now }
         let mode = Self.desiredHold(keepAwake: keepAwake, autoAwake: autoAwake,
                                     running: runningCount, attention: attentionCount,
-                                    lastBusyAge: lastBusyAt.map { now.timeIntervalSince($0) })
+                                    lastBusyAge: lastBusyAt.map { now.timeIntervalSince($0) },
+                                    keepScreenOn: keepScreenOn)
         let alive = Caffeine.shared.set(mode: mode)
         let active = alive && mode != .off
         if active != awakeActive { awakeActive = active }
@@ -282,8 +454,9 @@ final class AppState: ObservableObject {
 
     private func upsertSession(_ e: AgentEvent) {
         guard e.kind != .info else { return }
+        let wasAttention = sessions.first(where: { $0.id == e.sourceKey })?.kind == .attention
         if let i = sessions.firstIndex(where: { $0.id == e.sourceKey }) {
-            if sessions[i].kind == .attention && e.kind != .attention {
+            if wasAttention && e.kind != .attention {
                 pendingAttention = max(0, pendingAttention - 1)
             }
             sessions[i].kind = e.kind
@@ -296,9 +469,23 @@ final class AppState: ObservableObject {
                                         sessionName: e.sessionName, kind: e.kind,
                                         message: e.message, updated: e.ts))
         }
-        if e.kind == .attention { pendingAttention += 1 }
+        // One count per waiting session, not per notification. Claude Code
+        // fires Notification repeatedly for a single session (two permission
+        // prompts in a turn is routine), and the decrement only ever ran on a
+        // transition out of .attention — so the residue left the collapsed
+        // notch glowing orange after everything had actually finished.
+        if e.kind == .attention && !wasAttention { pendingAttention += 1 }
         sortSessions()
-        if sessions.count > 12 { sessions.removeLast(sessions.count - 12) }
+        if sessions.count > 12 {
+            // Evicted cards must hand back what they were holding, or the
+            // counter (and the glow) leaks for the life of the app.
+            for evicted in sessions.suffix(sessions.count - 12) {
+                if evicted.kind == .attention { pendingAttention = max(0, pendingAttention - 1) }
+                runStarts.removeValue(forKey: evicted.id)
+                latestEntries.removeValue(forKey: evicted.id)
+            }
+            sessions.removeLast(sessions.count - 12)
+        }
     }
 
     /// Attention first, then running, then finished — every path that changes
@@ -314,6 +501,11 @@ final class AppState: ObservableObject {
     /// Bookkeeping for a card leaving the running/attention world outside
     /// apply(): the run-start must not survive to poison a future resume's
     /// duration (spurious long-run chime), and the list must re-rank.
+    private func demoteQuietly(id: String, message: String) {
+        guard let i = sessions.firstIndex(where: { $0.id == id }) else { return }
+        demoteQuietly(at: i, message: message)
+    }
+
     private func demoteQuietly(at i: Int, message: String) {
         if sessions[i].kind == .attention { pendingAttention = max(0, pendingAttention - 1) }
         runStarts.removeValue(forKey: sessions[i].id)
@@ -363,22 +555,21 @@ final class AppState: ObservableObject {
     /// tunnel must not hold the Mac awake all night), prune old finishes,
     /// and re-arm/retry the power assertion. Runs on a timer and on wake.
     func maintenanceSweep(now: Date = Date()) {
-        var mutated = false
-        for i in sessions.indices {
-            guard sessions[i].kind == .running || sessions[i].kind == .attention else { continue }
-            let silent: Bool
-            if let seen = hostLastReport[sessions[i].host] {
-                silent = now.timeIntervalSince(seen) > Self.hostSilenceCutoff
-            } else {
-                // Hosts that never report (web tabs, hook-only sources) are
-                // judged by the card's own last update instead.
-                let cutoff = sessions[i].host == "web" ? Self.webSilenceCutoff : Self.orphanSilenceCutoff
-                silent = now.timeIntervalSince(sessions[i].updated) > cutoff
+        // Collected first, demoted after: demoteQuietly re-sorts, and mutating
+        // the array under an index loop skipped ghosts — each extra one held
+        // the Mac awake for another sweep.
+        let doomed = sessions.filter { s in
+            guard s.kind == .running || s.kind == .attention else { return false }
+            if let seen = hostLastReport[s.host] {
+                return now.timeIntervalSince(seen) > Self.hostSilenceCutoff
             }
-            guard silent else { continue }
-            demoteQuietly(at: i, message: "lost contact")
-            mutated = true
-        }
+            // Hosts that never report (web tabs, hook-only sources) are
+            // judged by the card's own last update instead.
+            let cutoff = s.host == "web" ? Self.webSilenceCutoff : Self.orphanSilenceCutoff
+            return now.timeIntervalSince(s.updated) > cutoff
+        }.map(\.id)
+        for id in doomed { demoteQuietly(id: id, message: "lost contact") }
+        let mutated = !doomed.isEmpty
         let before = sessions.count
         sessions.removeAll { $0.kind == .done && now.timeIntervalSince($0.updated) > 1800 }
         if mutated || sessions.count != before {
@@ -466,16 +657,23 @@ final class AppState: ObservableObject {
         // Hook-created cards for sessions this host's own registry doesn't
         // list (the terminal died before or between reports) must not stay
         // "working" forever — the stuck-attention class of ghosts.
-        var mutated = false
         let prefix = "\(host)#"
-        for i in sessions.indices {
-            guard sessions[i].id.hasPrefix(prefix),
-                  sessions[i].kind == .running || sessions[i].kind == .attention else { continue }
-            let sid = String(sessions[i].id.dropFirst(prefix.count))
-            guard !sid.isEmpty, !present.contains(sid),
-                  Date().timeIntervalSince(sessions[i].updated) > Self.registryOrphanGrace else { continue }
-            demoteQuietly(at: i, message: "session ended")
-            mutated = true
+        let orphans = sessions.filter { s in
+            guard s.id.hasPrefix(prefix),
+                  s.kind == .running || s.kind == .attention else { return false }
+            let sid = String(s.id.dropFirst(prefix.count))
+            return !sid.isEmpty && !present.contains(sid)
+                && Date().timeIntervalSince(s.updated) > Self.registryOrphanGrace
+        }.map(\.id)
+        for id in orphans { demoteQuietly(id: id, message: "session ended") }
+        let mutated = !orphans.isEmpty
+        // Snapshots for sessions this host no longer lists are dead weight —
+        // nothing evicted them, so the dictionary grew for the life of the
+        // app. A finish still waiting on its verdict keeps its snapshot.
+        latestEntries = latestEntries.filter { key, _ in
+            guard key.hasPrefix(prefix) else { return true }
+            let sid = String(key.dropFirst(prefix.count))
+            return present.contains(sid) || pendingFinish[key] != nil
         }
         // Drop long-finished sessions so the list stays live.
         let stale = sessions.contains { $0.kind == .done && Date().timeIntervalSince($0.updated) > 1800 }
@@ -666,8 +864,12 @@ final class AppState: ObservableObject {
                 nowPlaying = flipped
             }
         } else {
+            // Only known verbs cross into AppleScript — an unmapped command
+            // used to be forwarded verbatim, which made the music endpoint a
+            // remote shell for anything that could reach the listener.
             let map = ["playpause": "playpause", "next": "next track", "previous": "previous track"]
-            MusicWatcher.control(map[cmd] ?? cmd, app: np.app)
+            guard let verb = map[cmd] else { return }
+            MusicWatcher.control(verb, app: np.app)
         }
     }
 
@@ -708,6 +910,9 @@ final class AppState: ObservableObject {
     private var recentPeeks: [String: Date] = [:]
     private static let peekEncore: TimeInterval = 180
 
+    /// Bumped per artwork request so a slow fetch can't overwrite a newer one.
+    private var artworkGeneration = 0
+
     private func setNowPlaying(_ incoming: NowPlaying?) {
         var np = incoming
         if let o = optimisticPlay {
@@ -727,12 +932,18 @@ final class AppState: ObservableObject {
         nowPlayingArt = nil
         nowPlayingArtColor = nil
         if !np.artworkURL.isEmpty, let url = URL(string: np.artworkURL) {
+            // Skipping tracks used to leave whichever fetch finished last on
+            // screen — track B playing under track A's art and glow. Only the
+            // newest request may paint.
+            artworkGeneration &+= 1
+            let generation = artworkGeneration
             URLSession.shared.dataTask(with: url) { data, _, _ in
                 guard let data, let img = NSImage(data: data) else { return }
                 let thumb = img.hudThumbnail(maxDim: 240)
                 let avg = thumb.averageColor
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
+                        guard self.artworkGeneration == generation else { return }
                         self.nowPlayingArt = thumb
                         self.nowPlayingArtColor = avg
                     }
@@ -744,7 +955,7 @@ final class AppState: ObservableObject {
            lastPeek.map({ Date().timeIntervalSince($0) > Self.peekEncore }) ?? true {
             recentPeeks[np.title] = Date()
             recentPeeks = recentPeeks.filter { Date().timeIntervalSince($0.value) < Self.peekEncore }
-            show(.peek(.music(np)), autoCollapse: 4)
+            show(.peek(.music(np)), autoCollapse: musicPeekSeconds)
         }
     }
 
@@ -765,7 +976,7 @@ final class AppState: ObservableObject {
         clipboard.insert(item, at: 0)
         if clipboard.count > 10 { clipboard.removeLast(clipboard.count - 10) }
         if expandOnCopy && !hudState.isOpen {
-            show(.peek(.clipboard(item)), autoCollapse: 3.5)
+            show(.peek(.clipboard(item)), autoCollapse: clipboardPeekSeconds)
         }
     }
 
@@ -780,6 +991,22 @@ final class AppState: ObservableObject {
         show(.collapsed, autoCollapse: nil)
     }
 
+    /// Retract whatever is showing, right now — the escape hatch for a peek
+    /// that lands in the middle of something. Hovering must not immediately
+    /// re-open it, so the hover gate is told to stand down too.
+    func dismissNow() {
+        hovering = false
+        hoverTask?.cancel()
+        collapse()
+    }
+
+    /// Resolve one card by hand. Routes through the quiet demote so the
+    /// attention count and the run-start are released properly.
+    func dismiss(sessionId id: String) {
+        demoteQuietly(id: id, message: "dismissed")
+        refreshCollapsedFrame()
+    }
+
     func clearEvents() {
         events.removeAll()
         sessions.removeAll()
@@ -791,11 +1018,15 @@ final class AppState: ObservableObject {
         hovering = h
         hoverTask?.cancel()
         if h {
+            // Cancelling the collapse also parks a hovered slide-out: it stays
+            // put while you read it instead of retracting out from under you.
             collapseTask?.cancel()
+            if case .peek = hudState, !hoverExpandsPeek { return }
             if !hudState.isOpen { openPanel() }
         } else {
-            // Tiny grace so edge-skimming doesn't flicker; retract feels immediate.
-            scheduleCollapse(after: 0.15)
+            // Grace so edge-skimming and a wandering pointer inside the panel
+            // don't snap it shut mid-read.
+            scheduleCollapse(after: hoverCollapseDelay)
         }
     }
 

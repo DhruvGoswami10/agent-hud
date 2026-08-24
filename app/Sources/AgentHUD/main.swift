@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var state: AppState!
@@ -8,16 +9,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var registryReporter: Process?
     private var aliasTimer: Timer?
     private var sweepTimer: Timer?
+    private var updateTimer: Timer?
+    private var awakeTimer: Timer?
+    private var hotKeyObserver: AnyCancellable?
     private var terminating = false
     private var notchController: NotchWindowController!
     private var statusItemController: StatusItemController!
+
+    @MainActor
+    private func applyHotKey(_ state: AppState) {
+        if state.dismissHotKeyEnabled {
+            HotKey.shared.enable { [weak state] in state?.dismissNow() }
+        } else {
+            HotKey.shared.disable()
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let state = AppState()
         self.state = state
         notchController = NotchWindowController(state: state)
         statusItemController = StatusItemController(state: state)
+        SettingsWindowController.shared = SettingsWindowController(state: state)
         Notifier.shared.setup()
+        // Ask once shortly after launch too: the authorization callback can
+        // land before the delegate is ready, and a permission revoked in
+        // System Settings must show up without a relaunch.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            MainActor.assumeIsolated {
+                Notifier.shared.refreshStatus()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    MainActor.assumeIsolated { state.refreshNotificationStatus() }
+                }
+            }
+        }
+        applyHotKey(state)
+        // Re-register when the preference changes, so the toggle takes effect
+        // without a relaunch.
+        hotKeyObserver = state.$dismissHotKeyEnabled
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.applyHotKey(state) }
+            }
+        if state.autoUpdateCheck { Updater.shared.check() }
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { _ in
+            Task { @MainActor in if state.autoUpdateCheck { Updater.shared.check() } }
+        }
+        // Keeps a timed keep-awake hold honest — it must expire on its own
+        // within seconds of its deadline, not at the next 30s sweep.
+        awakeTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+            Task { @MainActor in state.updateCaffeine() }
+        }
         clipboardWatcher = ClipboardWatcher { item in state.clipboardChanged(item) }
         clipboardWatcher.start()
         musicWatcher = MusicWatcher(state: state)
@@ -28,7 +70,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in HostAliases.reload() }
         }
         sweepTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
-            Task { @MainActor in state.maintenanceSweep() }
+            Task { @MainActor in
+                state.maintenanceSweep()
+                Notifier.shared.refreshStatus()
+                state.refreshNotificationStatus()
+            }
         }
         // Converge fast after sleep: demote ghosts, re-arm the assertion.
         NSWorkspace.shared.notificationCenter.addObserver(

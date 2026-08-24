@@ -70,6 +70,23 @@ enum EventKind: String {
     }
 }
 
+/// `image_path` arrives in an unauthenticated POST body, so it decides which
+/// file the HUD opens. Constrained to things that are actually images, and to
+/// a sane size, so it can't be used to sniff for arbitrary files by watching
+/// what does and doesn't render.
+func safeImagePath(_ raw: String) -> String? {
+    let allowedExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "tiff", "tif", "heic", "webp", "bmp"]
+    let expanded = (raw as NSString).expandingTildeInPath
+    // Resolved first so a symlinked screenshot still renders — and so the
+    // checks below judge the file that would actually be opened.
+    let path = URL(fileURLWithPath: expanded).resolvingSymlinksInPath().path
+    guard allowedExtensions.contains((path as NSString).pathExtension.lowercased()) else { return nil }
+    let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+    guard let size = attrs?[.size] as? Int, size > 0, size <= 25_000_000 else { return nil }
+    guard (attrs?[.type] as? FileAttributeType) == .typeRegular else { return nil }
+    return path
+}
+
 struct AgentEvent: Identifiable {
     let id = UUID()
     let kind: EventKind
@@ -103,8 +120,7 @@ struct AgentEvent: Identifiable {
            let data = Data(base64Encoded: b64, options: [.ignoreUnknownCharacters]),
            let img = NSImage(data: data) {
             image = img.hudThumbnail(maxDim: 220)
-        } else if let p = json["image_path"] as? String {
-            let path = (p as NSString).expandingTildeInPath
+        } else if let p = json["image_path"] as? String, let path = safeImagePath(p) {
             if let img = NSImage(contentsOfFile: path) { image = img.hudThumbnail(maxDim: 220) }
         }
         return AgentEvent(
@@ -170,6 +186,13 @@ struct ClipboardItem: Identifiable {
     let image: NSImage?
     let signature: String
     let ts = Date()
+    /// What a chip copies back. `text`/`image` are a preview — truncated at
+    /// 800 characters, thumbnailed to 320px — so re-copying from them would
+    /// quietly destroy the original. These carry the real thing.
+    var fullText: String = ""
+    var imageData: Data? = nil
+    var imageType: String = ""
+    var fileURLs: [URL] = []
 }
 
 /// Content fingerprint used to ignore re-copies of identical content. Apps

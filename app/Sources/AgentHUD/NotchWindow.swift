@@ -28,7 +28,7 @@ final class NotchPanel: NSPanel {
 /// clicks meant for windows underneath.
 @MainActor
 final class NotchWindowController {
-    struct Metrics {
+    struct Metrics: Equatable {
         let notchWidth: CGFloat
         let notchHeight: CGFloat
         let hasNotch: Bool
@@ -62,9 +62,15 @@ final class NotchWindowController {
     }
 
     private func screensChanged() {
-        metrics = Self.computeMetrics(for: Self.targetScreen())
-        if let hosting = panel.contentView as? NSHostingView<NotchRootView> {
-            hosting.rootView = NotchRootView(state: state, metrics: metrics)
+        let fresh = Self.computeMetrics(for: Self.targetScreen())
+        // Rebuilding the root view resets its @State, which blanks the panel's
+        // content while it's open. Display sleep/wake and most resolution
+        // changes leave the notch geometry identical, so don't pay for it.
+        if fresh != metrics {
+            metrics = fresh
+            if let hosting = panel.contentView as? NSHostingView<NotchRootView> {
+                hosting.rootView = NotchRootView(state: state, metrics: metrics)
+            }
         }
         fixFrame()
     }
@@ -86,21 +92,38 @@ final class NotchWindowController {
         NotchControllerRegistry.shared = self
     }
 
+    /// Entering is deliberately tight — the notch strip sits on the path
+    /// between displays. Leaving is deliberately loose: once the panel is
+    /// open the pointer wanders to its edges (the header buttons, the
+    /// clipboard chips, the burn strip along the bottom), and a 4pt boundary
+    /// snapped it shut mid-read.
+    static let enterMargin: CGFloat = 4
+    static let exitMargin: CGFloat = 32
+
+    private static func hoverRect(_ sz: NSSize, on screen: NSScreen, margin: CGFloat) -> NSRect {
+        NSRect(x: screen.frame.midX - sz.width / 2 - margin,
+               y: screen.frame.maxY - sz.height - margin,
+               width: sz.width + margin * 2,
+               height: sz.height + margin * 2)
+    }
+
     fileprivate func pollMouse() {
         guard let screen = Self.targetScreen() else { return }
         let sz = Self.contentSize(for: state.hudState, metrics: metrics,
                                   aggregate: state.aggregate, sideBars: state.sideBars,
-                                  peekPreview: state.peekPreviewSize)
-        let rect = NSRect(x: screen.frame.midX - sz.width / 2 - 4,
-                          y: screen.frame.maxY - sz.height - 4,
-                          width: sz.width + 8,
-                          height: sz.height + 8)
+                                  peekPreview: state.peekPreviewSize,
+                                  idleIndicator: state.alwaysShowIndicator)
         let mouse = NSEvent.mouseLocation
-        let inside = rect.contains(mouse)
-        if inside == ignoringMouse {
-            ignoringMouse = !inside
-            panel.ignoresMouseEvents = !inside
+        // Clicks pass through anywhere outside the black shape itself, so the
+        // looser hover boundary never steals a click from the window beneath.
+        let contentRect = Self.hoverRect(sz, on: screen, margin: Self.enterMargin)
+        let overContent = contentRect.contains(mouse)
+        if overContent == ignoringMouse {
+            ignoringMouse = !overContent
+            panel.ignoresMouseEvents = !overContent
         }
+        let margin = hoverGate.engaged ? Self.exitMargin : Self.enterMargin
+        let inside = Self.hoverRect(sz, on: screen, margin: margin).contains(mouse)
         if let engaged = hoverGate.update(point: mouse, inside: inside) {
             state.hoverChanged(engaged)
         }
@@ -110,11 +133,21 @@ final class NotchWindowController {
     /// from anywhere.
     nonisolated static func contentSize(for target: HUDState, metrics m: Metrics,
                                         aggregate: EventKind, sideBars: Bool,
-                                        peekPreview: CGSize? = nil) -> NSSize {
+                                        peekPreview: CGSize? = nil,
+                                        idleIndicator: Bool = false) -> NSSize {
         switch target {
         case .collapsed:
             guard m.hasNotch else { return NSSize(width: 210, height: 30) }
-            if aggregate == .info { return NSSize(width: m.notchWidth, height: m.notchHeight) }
+            // Idle is exactly the notch — invisible — unless the resting
+            // indicator is on, which needs a sliver to draw into.
+            if aggregate == .info && !idleIndicator {
+                return NSSize(width: m.notchWidth, height: m.notchHeight)
+            }
+            if aggregate == .info {
+                return sideBars
+                    ? NSSize(width: m.notchWidth + 10, height: m.notchHeight)
+                    : NSSize(width: m.notchWidth, height: m.notchHeight + 3)
+            }
             return sideBars
                 ? NSSize(width: m.notchWidth + 16, height: m.notchHeight)
                 : NSSize(width: m.notchWidth, height: m.notchHeight + 4)

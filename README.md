@@ -67,6 +67,52 @@ reporting after a restart. New sessions report immediately.
 - Menu bar sparkle icon = aggregate state (orange approval / blue running /
   green recent done). Menu has toggles + "Send Test Event".
 
+## Quitting and starting again
+
+`Quit Agent HUD` stops the app. Nothing breaks while it's off — the hooks still
+fire, they just fail instantly (a refused loopback port costs ~30ms) and no
+events are recorded until it's back.
+
+To start it again, any of:
+
+```sh
+open ~/agent-hud/dist/AgentHUD.app    # or Spotlight: "AgentHUD"
+make run                              # rebuilds first
+```
+
+Or turn on **Open at Login** (menu bar, or Settings › General) and it comes back
+by itself after every restart.
+
+## Settings
+
+`Settings…` in the menu bar (or ⌘,) opens four tabs:
+
+- **Timing** — how long each slide-out stays (needs-you, done, clipboard,
+  music), whether a click dismisses one, the ⌥⎋ dismiss-from-anywhere hot key,
+  and how forgiving the hover is before the panel retracts.
+- **Appearance** — the resting indicator (the notch is invisible when idle by
+  default; turn this on for a dim mark that says it's alive), side bars,
+  alerts, animation.
+- **Keep Awake** — timed holds (15m / 30m / 1h / 2h / indefinitely) with a
+  live countdown, whether a manual hold keeps the screen lit or only stops the
+  machine sleeping, and the automatic hold while agents work.
+- **Updates** — the running version, a check against the newest release, and
+  a switch to stop checking.
+
+A slide-out goes away on the first click, or with **⌥⎋** from any app.
+
+## Updating
+
+```sh
+bin/agent-hud-update     # or: make update
+```
+
+Fast-forwards this clone, rebuilds, relaunches. It refuses rather than guesses:
+uncommitted work is never discarded and diverged history is never merged for
+you. The app only ever *tells* you a release exists — updating is a command you
+run, because the hooks, the reporter and the tunnel keeper all live in this
+repo, so the clone is the update unit, not the `.app`.
+
 ## Remote machines
 
 See [docs/remote-setup.md](docs/remote-setup.md). Short version: copy `bin/` to

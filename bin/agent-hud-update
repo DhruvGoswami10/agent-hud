@@ -1,0 +1,76 @@
+#!/bin/sh
+# Update Agent HUD in place: fast-forward the clone, rebuild, relaunch.
+#
+# Deliberately a script you run rather than something the app does to itself.
+# The app runs out of this repo — the hooks call bin/agent-hud-send, the
+# reporter is bin/agent-hud-registry, the tunnel keeper is bin/agent-hud-tunnels
+# — so the update unit is the clone, not the .app. And an app that pulls and
+# executes code on its own schedule is a supply chain with one link.
+#
+# Refuses rather than guesses: no uncommitted work is discarded, no merge is
+# resolved, nothing is force-anything.
+set -eu
+
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO"
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'agent-hud-update: %s\n' "$*" >&2; exit 1; }
+
+[ -d .git ] || die "$REPO is not a git clone — nothing to update from."
+command -v git >/dev/null 2>&1 || die "git not found."
+
+if ! git diff --quiet || ! git diff --cached --quiet; then
+    say "You have uncommitted changes in $REPO:"
+    git status --short
+    say ""
+    die "commit or stash them first — this script will not touch your work."
+fi
+
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+[ "$BRANCH" != "HEAD" ] || die "detached HEAD — check out a branch first."
+
+BEFORE="$(git describe --tags --always --dirty 2>/dev/null || echo unknown)"
+say "· current: $BEFORE (on $BRANCH)"
+
+say "· fetching…"
+git fetch --tags --quiet origin
+
+UPSTREAM="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || echo "origin/$BRANCH")"
+if ! git rev-parse --verify --quiet "$UPSTREAM" >/dev/null; then
+    die "no upstream branch ($UPSTREAM) to update from."
+fi
+
+LOCAL="$(git rev-parse HEAD)"
+REMOTE="$(git rev-parse "$UPSTREAM")"
+if [ "$LOCAL" = "$REMOTE" ]; then
+    say "· already up to date."
+    exit 0
+fi
+
+say "· changes coming in:"
+git --no-pager log --oneline --no-decorate "HEAD..$UPSTREAM" | sed 's/^/    /'
+
+# --ff-only: if history diverged, stop and let a human decide.
+git merge --ff-only "$UPSTREAM" --quiet \
+    || die "cannot fast-forward (local commits diverge from $UPSTREAM). Merge or rebase by hand."
+
+AFTER="$(git describe --tags --always --dirty 2>/dev/null || echo unknown)"
+say "· updated: $BEFORE → $AFTER"
+
+say "· rebuilding…"
+make bundle
+
+say "· relaunching…"
+killall AgentHUD 2>/dev/null || true
+open dist/AgentHUD.app
+
+# The hook forwarder path is unchanged by an update, but a new release can add
+# hook events; re-running the installer is idempotent and cheap.
+if [ -x bin/install-hooks.py ] || [ -f bin/install-hooks.py ]; then
+    python3 bin/install-hooks.py "$REPO/bin/agent-hud-send" >/dev/null 2>&1 || true
+fi
+
+say ""
+say "Done — Agent HUD $AFTER is running."
+say "Already-open Claude Code sessions pick up hook changes after a restart."

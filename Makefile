@@ -1,7 +1,10 @@
 APP := dist/AgentHUD.app
 BIN := app/.build/release/AgentHUD
+# Stamped into the bundle so the app can answer "what am I running" — the
+# update check has nothing to compare against otherwise.
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: build bundle run hooks test clean uninstall
+.PHONY: build bundle run hooks test clean uninstall update
 
 build:
 	cd app && swift build -c release
@@ -11,6 +14,8 @@ bundle: build
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp $(BIN) $(APP)/Contents/MacOS/AgentHUD
 	cp app/Info.plist $(APP)/Contents/Info.plist
+	/usr/libexec/PlistBuddy -c "Add :AgentHUDVersion string $(VERSION)" $(APP)/Contents/Info.plist >/dev/null 2>&1 \
+	  || /usr/libexec/PlistBuddy -c "Set :AgentHUDVersion $(VERSION)" $(APP)/Contents/Info.plist
 	codesign --force --sign - $(APP)
 
 run: bundle
@@ -29,6 +34,11 @@ test:
 
 clean:
 	rm -rf app/.build dist
+
+# Pull, rebuild and relaunch — the app runs from this clone, so the repo is
+# the update unit, not the .app.
+update:
+	bash bin/agent-hud-update
 
 # Remove the app, LaunchAgents, hooks and caches from this Mac (repo stays).
 uninstall:

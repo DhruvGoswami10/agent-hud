@@ -12,7 +12,8 @@ struct NotchRootView: View {
     var body: some View {
         let sz = NotchWindowController.contentSize(for: state.hudState, metrics: metrics,
                                                    aggregate: state.aggregate, sideBars: state.sideBars,
-                                                   peekPreview: state.peekPreviewSize)
+                                                   peekPreview: state.peekPreviewSize,
+                                                   idleIndicator: state.alwaysShowIndicator)
         ZStack(alignment: .top) {
             NotchShape(topRadius: topRadius, bottomRadius: bottomRadius)
                 .fill(.black)
@@ -45,7 +46,25 @@ struct NotchRootView: View {
         .animation(state.hudState.isCollapsed ? state.animStyle.collapseAnimation : state.animStyle.animation, value: sz)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .contentShape(Rectangle())
-        .onTapGesture { if !state.hudState.isOpen { state.openPanel() } }
+        .onTapGesture {
+            switch state.hudState {
+            case .peek:
+                // A peek that lands mid-thought should go away on the first
+                // click, not grow into the whole panel.
+                if state.clickPeekDismisses { state.dismissNow() } else { state.openPanel() }
+            case .collapsed:
+                state.openPanel()
+            case .open:
+                break
+            }
+        }
+        .onAppear {
+            // A display change rebuilds this view from scratch while the HUD
+            // may already be open; onChange won't fire (the stage didn't
+            // change), which left the island as an empty black slab until the
+            // next collapse.
+            if state.hudState.stage != 0 { showContent = true }
+        }
         .onChange(of: state.hudState.stage) { _, stage in
             // Every stage change resizes the shape; content must never be
             // visible mid-growth (it reflows and overlaps). Hide instantly,
@@ -95,8 +114,19 @@ private struct CollapsedStrip: View {
     let metrics: NotchWindowController.Metrics
     @State private var pulse = false
 
+    /// Idle is normally invisible — the notch is the notch. With the resting
+    /// indicator on, idle instead shows a very dim neutral mark, so the HUD
+    /// never looks like it has died.
+    private var showing: Bool { state.aggregate != .info || state.alwaysShowIndicator }
+    private var tint: Color {
+        state.aggregate == .info ? Color(white: 0.78) : state.aggregate.color
+    }
+    // 0.16 was so faint it read as "off" on a bright desktop — the point of
+    // a resting mark is that you can actually see it.
+    private var restingOpacity: Double { state.aggregate == .info ? 0.42 : 0.95 }
+
     var body: some View {
-        if state.aggregate != .info {
+        if showing {
             Group {
                 if state.sideBars {
                     HStack {
@@ -108,7 +138,7 @@ private struct CollapsedStrip: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     Capsule()
-                        .fill(state.aggregate.color)
+                        .fill(tint)
                         .frame(height: 2.5)
                         .padding(.horizontal, 16)
                         .padding(.bottom, 1)
@@ -116,7 +146,7 @@ private struct CollapsedStrip: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 }
             }
-            .opacity(state.aggregate == .running && pulse ? 0.3 : 0.95)
+            .opacity(state.aggregate == .running && pulse ? 0.3 : restingOpacity)
             .onAppear {
                 withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { pulse = true }
             }
@@ -125,7 +155,7 @@ private struct CollapsedStrip: View {
 
     private var sideBar: some View {
         Capsule()
-            .fill(state.aggregate.color)
+            .fill(tint)
             .frame(width: 3, height: max(10, metrics.notchHeight - 12))
             .blur(radius: 0.4)
     }
@@ -844,10 +874,21 @@ private struct ClipChip: View {
     private func copyBack() {
         let pb = NSPasteboard.general
         pb.clearContents()
-        if let img = item.image {
-            pb.writeObjects([img])
-        } else {
-            pb.setString(item.text, forType: .string)
+        // Restore the original, not the preview: the chip's own text is cut at
+        // 800 characters and its image is a 320px thumbnail, so copying those
+        // back used to silently shrink whatever you clicked — and a file chip
+        // put the filename on the clipboard instead of the file.
+        switch item.kind {
+        case .file where !item.fileURLs.isEmpty:
+            pb.writeObjects(item.fileURLs as [NSURL])
+        case .image:
+            if let data = item.imageData, !item.imageType.isEmpty {
+                pb.setData(data, forType: .init(item.imageType))
+            } else if let img = item.image {
+                pb.writeObjects([img])
+            }
+        default:
+            pb.setString(item.fullText.isEmpty ? item.text : item.fullText, forType: .string)
         }
         withAnimation(.spring(response: 0.22, dampingFraction: 0.85)) { copied = true }
         Task {

@@ -71,12 +71,17 @@ enum SVGPath {
         while true {
             skipSeparators()
             guard i < chars.count else { break }
+            let iterationStart = i
             if chars[i].isLetter {
                 cmd = chars[i]
                 i += 1
             }
             let relative = cmd.isLowercase
-            let op = Character(cmd.uppercased())
+            // Not Character(cmd.uppercased()): letters whose uppercase form
+            // expands ("ß" → "SS", "ﬁ" → "FI") are more than one grapheme and
+            // trapped instead of falling through to the bail-out below.
+            let upper = cmd.uppercased()
+            guard upper.count == 1, let op = upper.first else { return path }
             var isCubic = false
             var isQuad = false
 
@@ -152,6 +157,10 @@ enum SVGPath {
             }
             if !isCubic { lastCubicControl = nil }
             if !isQuad { lastQuadControl = nil }
+            // Z consumes no characters of its own, so any non-letter byte
+            // after one ("M0 0 L10 10 Z5") left the index parked and closed
+            // the subpath forever — a hard hang on the render thread.
+            if i == iterationStart { return path }
         }
         return path
     }
