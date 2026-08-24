@@ -23,6 +23,7 @@
 		65067D9C30206C0900781513 /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = 65067D9630206C0900781513 /* README.md */; };
 		65067D9D30206C0900781513 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 65067D9730206C0900781513 /* manifest.json */; };
 		65067D9E30206C0900781513 /* chatgpt.js in Resources */ = {isa = PBXBuildFile; fileRef = 65067D9830206C0900781513 /* chatgpt.js */; };
+		65067D9F30206C0900781513 /* policy.js in Resources */ = {isa = PBXBuildFile; fileRef = 65067DA030206C0900781513 /* policy.js */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -69,6 +70,7 @@
 		65067D9630206C0900781513 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = README.md; path = ../../../extension/README.md; sourceTree = "<group>"; };
 		65067D9730206C0900781513 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = manifest.json; path = ../../../extension/manifest.json; sourceTree = "<group>"; };
 		65067D9830206C0900781513 /* chatgpt.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = chatgpt.js; path = ../../../extension/chatgpt.js; sourceTree = "<group>"; };
+		65067DA030206C0900781513 /* policy.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = policy.js; path = ../../../extension/policy.js; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -147,6 +149,7 @@
 				65067D9330206C0900781513 /* claude.js */,
 				65067D9430206C0900781513 /* bg.js */,
 				65067D9530206C0900781513 /* youtube.js */,
+				65067DA030206C0900781513 /* policy.js */,
 				65067D9630206C0900781513 /* README.md */,
 				65067D9730206C0900781513 /* manifest.json */,
 				65067D9830206C0900781513 /* chatgpt.js */,
@@ -260,6 +263,7 @@
 				65067D9D30206C0900781513 /* manifest.json in Resources */,
 				65067D9C30206C0900781513 /* README.md in Resources */,
 				65067D9B30206C0900781513 /* youtube.js in Resources */,
+				65067D9F30206C0900781513 /* policy.js in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

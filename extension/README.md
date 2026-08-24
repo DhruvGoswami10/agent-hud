@@ -29,6 +29,12 @@ xcrun safari-web-extension-converter ~/agent-hud/extension --app-name "Agent HUD
 then build/run the generated project once and enable the extension in
 Safari → Settings → Extensions (allow on youtube.com, chatgpt.com, claude.ai).
 
+One more Safari-only step: also allow the extension on **127.0.0.1** (in the
+same Extensions pane, or just pick **Always Allow on Every Website**). Safari
+gates the background script's `http://127.0.0.1:48085` calls behind their own
+per-site permission — and since you never *visit* 127.0.0.1, nothing ever
+prompts for it. Skip this and the whole bridge is silently dead.
+
 ## Notes
 
 - Everything talks to `http://127.0.0.1:48085` (the HUD's listener). If the HUD

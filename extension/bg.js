@@ -15,6 +15,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch(() => sendResponse({ ok: false }));
     return true; // keep the message channel open for the async response
   }
+  if (msg && msg.type === "tabId") {
+    // The asking tab's own id. Content scripts have no way to tell themselves
+    // apart: sessionStorage looks per-tab but is *copied* into a duplicated
+    // tab, so two live players would end up sharing one HUD lane. A tab id is
+    // unique, survives reloads, and is never cloned. Answered synchronously —
+    // the channel is already settled, so nothing has to stay open for it.
+    sendResponse(sender.tab ? sender.tab.id : null);
+    return;
+  }
   if (msg && msg.type === "focusTab" && sender.tab) {
     // Raise the tab that asked (a "focus" music command it pulled from the
     // HUD) — content scripts can't do this themselves.
