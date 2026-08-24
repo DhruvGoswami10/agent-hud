@@ -14,6 +14,10 @@ if pgrep -x AgentHUD >/dev/null 2>&1; then
 fi
 pkill -f "[a]gent-hud-registry" 2>/dev/null && echo "· stopped local registry reporter"
 pkill -f "[a]gent-hud-tunnels" 2>/dev/null && echo "· stopped tunnel keeper"
+# Tunnels orphaned by a crashed keeper live in their own process group and
+# survive the line above — match the tunnel command itself. Requiring -N and
+# the exact forward spec keeps this away from unrelated ssh sessions.
+pkill -f "ssh.*-N -R 48085:127.0.0.1:48085" 2>/dev/null && echo "· killed orphaned tunnels"
 
 # 2. LaunchAgents (login item + tunnel keeper).
 for label in dev.dhruv.agenthud.app dev.dhruv.agenthud.tunnels; do

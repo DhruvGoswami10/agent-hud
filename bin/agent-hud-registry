@@ -186,6 +186,14 @@ def snapshot():
         row.update(session_stats(sid))
         row.update(file_changes(sid))
         out.append(row)
+    # Evict caches for sessions this snapshot no longer reports (24h cutoff,
+    # dead pid, deleted registry file): the daemon runs for weeks and would
+    # otherwise keep an entry per sessionId forever. A wrongly-evicted live
+    # session just costs one re-scan on its next appearance.
+    live = {row["sessionId"] for row in out}
+    for cache in (_titles, _stats, _changes):
+        for sid in [s for s in cache if s not in live]:
+            del cache[sid]
     return out
 
 
@@ -274,21 +282,22 @@ def file_changes(sid):
 # cache-creation + output; cache reads excluded) per hour. Reported as rolling
 # 5h/7d sums plus the busiest 5h window of the week for self-calibrated bars.
 
-_usage_files = {}    # path -> [resume_offset]
+_usage_files = {}    # path -> [resume_offset, {epoch-hour: tokens}] (that file's share)
 _usage_buckets = {}  # epoch-hour -> tokens
 _usage_last = 0.0
 
 
-def _bucket_add(ts, tokens):
+def _bucket_add(ts, tokens, contrib):
     try:
         eh = calendar.timegm((int(ts[0:4]), int(ts[5:7]), int(ts[8:10]),
                               int(ts[11:13]), 0, 0)) // 3600
     except Exception:
         return
     _usage_buckets[eh] = _usage_buckets.get(eh, 0) + tokens
+    contrib[eh] = contrib.get(eh, 0) + tokens
 
 
-def _tail_parse(f):
+def _tail_parse(f, contrib):
     offset = f.tell()
     while True:
         line = f.readline()
@@ -309,7 +318,7 @@ def _tail_parse(f):
         tokens = (u.get("input_tokens") or 0) + (u.get("cache_creation_input_tokens") or 0) \
             + (u.get("output_tokens") or 0)
         if tokens:
-            _bucket_add(j.get("timestamp") or "", tokens)
+            _bucket_add(j.get("timestamp") or "", tokens, contrib)
     return offset
 
 
@@ -319,6 +328,7 @@ def usage_windows():
     if now - _usage_last >= 60 or not _usage_buckets:
         _usage_last = now
         cutoff = now - 8 * 86400
+        seen = set()
         for path in glob.glob(os.path.expanduser("~/.claude/projects/*/*.jsonl")):
             try:
                 stt = os.stat(path)
@@ -326,19 +336,54 @@ def usage_windows():
                 continue
             if stt.st_mtime < cutoff:
                 continue
+            seen.add(path)
             rec = _usage_files.get(path)
-            start = rec[0] if rec and stt.st_size >= rec[0] else 0
+            if rec and stt.st_size < rec[0]:
+                # rotated/truncated: forget this file's share of the buckets
+                # before re-parsing from 0, or its tokens are counted twice
+                # (file_changes handles the same case for its counters).
+                for k, v in rec[1].items():
+                    left = _usage_buckets.get(k, 0) - v
+                    if left > 0:
+                        _usage_buckets[k] = left
+                    else:
+                        _usage_buckets.pop(k, None)
+                rec = _usage_files[path] = [0, {}]
+            start = rec[0] if rec else 0
             if start == stt.st_size:
                 continue
+            contrib = rec[1] if rec else {}
             try:
                 with open(path, "rb") as f:
                     f.seek(start)
-                    _usage_files[path] = [_tail_parse(f)]
+                    _usage_files[path] = [_tail_parse(f, contrib), contrib]
             except Exception:
                 continue
         floor = int(now // 3600) - 8 * 24
         for k in [k for k in _usage_buckets if k < floor]:
             del _usage_buckets[k]
+        for rec in _usage_files.values():
+            for k in [k for k in rec[1] if k < floor]:
+                del rec[1][k]
+        # Drop tails for transcripts the 8-day window no longer covers: the
+        # daemon runs for weeks and would otherwise keep an entry for every
+        # transcript it has ever seen. Evict only on positive evidence the
+        # file aged out. A stat that RAISES (unreadable home, network-home
+        # hiccup, file deleted mid-pass) proves nothing: that file's tokens
+        # are still live in the shared buckets, and forgetting its offset
+        # makes the next sighting re-parse the whole transcript and add all
+        # of them a second time, with nothing to subtract the orphan —
+        # inflating 5h/7d/peak for the rest of the 8-day window. A kept entry
+        # costs a few bytes; a dropped one costs eight days of wrong numbers.
+        for p in [p for p in _usage_files if p not in seen]:
+            try:
+                aged = os.stat(p).st_mtime < cutoff
+            except Exception:
+                aged = False  # missed this pass; keep the tail
+            # An empty share means every hour this file fed the buckets has
+            # already been pruned above, so re-parsing it can't double-count.
+            if aged or not _usage_files[p][1]:
+                del _usage_files[p]
     nh = int(now // 3600)
     h5 = sum(v for k, v in _usage_buckets.items() if k > nh - 5)
     d7 = sum(v for k, v in _usage_buckets.items() if k > nh - 168)
@@ -479,6 +524,10 @@ def _fetch_limits_uncached():
 
 
 def limits():
+    # `make test` and oneshot debugging must not read the real keychain or
+    # hit the live API — AGENT_HUD_SKIP_LIMITS short-circuits the whole path.
+    if os.environ.get("AGENT_HUD_SKIP_LIMITS"):
+        return None
     acct = account_info()
     try:
         st = os.stat(USAGE_CACHE)
@@ -488,12 +537,15 @@ def limits():
             # A cached reading belongs to the account it was fetched for —
             # after a /logout + /login it must not be shown for the new one.
             if (cached.get("account") or {}).get("uuid") == acct.get("uuid"):
-                return cached
+                return None if cached.get("failed") else cached
     except Exception:
         pass
     data = _fetch_limits_uncached()
     if not data:
-        return None
+        # Negative-cache the failure too: on a box that can't reach the API,
+        # every INTERVAL would otherwise re-run the keychain subprocess plus
+        # an HTTPS attempt. Retry on the USAGE_TTL cadence instead.
+        data = {"failed": True}
     data.setdefault("fetched_at", time.time())
     data["account"] = acct
     try:
@@ -502,7 +554,7 @@ def limits():
             json.dump(data, f)
     except Exception:
         pass
-    return data
+    return None if data.get("failed") else data
 
 
 def payload():

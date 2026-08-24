@@ -13,7 +13,9 @@ HOST="$1"
 CONF="$HOME/agent-hud/hosts.conf"
 [ -f "$CONF" ] || exit 0
 MATCHED=0
-while IFS= read -r pat; do
+# `|| [ -n "$pat" ]`: a final line without a trailing newline still
+# counts — read returns nonzero on it but does fill $pat.
+while IFS= read -r pat || [ -n "$pat" ]; do
     case "$pat" in ""|\#*) continue ;; esac
     case "$HOST" in
         $pat) MATCHED=1; break ;;
@@ -24,8 +26,17 @@ done < "$CONF"
 BIN="$HOME/agent-hud/bin"
 LOG="$HOME/agent-hud/bootstrap.log"
 LOCK="/tmp/agent-hud-bootstrap-$HOST.lock"
+# Reclaim a lock left by a bootstrap that died without cleanup (kill -9,
+# power loss) — a bootstrap run takes seconds, so an hour-old lock is stale
+# and must not disable provisioning of this host forever.
+if [ -d "$LOCK" ] && [ -n "$(find "$LOCK" -maxdepth 0 -mmin +60 2>/dev/null)" ]; then
+    rmdir "$LOCK" 2>/dev/null
+fi
 mkdir "$LOCK" 2>/dev/null || exit 0
+# POSIX sh skips the EXIT trap on an untrapped signal — a closing terminal
+# (SIGHUP) must not leave the lock behind, so route signals through exit.
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+trap 'exit 1' HUP INT TERM
 
 # PermitLocalCommand=no prevents recursion; ClearAllForwardings avoids
 # fighting over the reverse-tunnel port.

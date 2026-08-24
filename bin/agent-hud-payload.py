@@ -17,16 +17,41 @@ except Exception:
 AUTO_NAME = re.compile("^" + re.escape(re.sub(r"[^a-zA-Z0-9]+", "-", _user)) + r"-[0-9a-f]{2}$")
 
 
-def scan_transcript(path, full):
-    """Return (last assistant text, last custom title, outcome) from a transcript JSONL."""
+def scan_transcript(path):
+    """Return (last assistant text, last custom title, outcome) from a transcript JSONL.
+
+    Only the last ~256KB is read for the reply and outcome: transcripts grow
+    to tens of MB, and a full scan on every Stop can blow the 10s hook
+    timeout — losing the 'done' event and leaving the session stuck
+    'running'. The last assistant message and outcome always live in the
+    tail; the (possibly partial) first line after the seek simply fails to
+    parse and is skipped.
+
+    A rename, though, is written once wherever it happened — usually in the
+    first minutes — so the head is swept for custom-title records too. Tail
+    alone lost the name of every session bigger than the window, and those
+    reported Claude Code's auto-generated "<user>-<hex>" instead.
+    """
     last, title, outcome = "", "", ""
     if not path:
         return last, title, outcome
     try:
         with open(path, "rb") as f:
-            if not full:
-                size = os.fstat(f.fileno()).st_size
-                f.seek(max(0, size - 262144))
+            size = os.fstat(f.fileno()).st_size
+            if size > 262144:
+                # One extra 64KB read; the tail below still wins for a
+                # session renamed later on. A trailing partial line just
+                # fails to parse.
+                for raw in f.read(65536).split(b"\n"):
+                    if b"custom-title" not in raw:
+                        continue
+                    try:
+                        j = json.loads(raw)
+                    except Exception:
+                        continue
+                    if j.get("type") == "custom-title" and j.get("customTitle"):
+                        title = j["customTitle"]
+                f.seek(size - 262144)
             for raw in f:
                 if b"[Request interrupted by user" in raw:
                     outcome = "interrupted"
@@ -121,14 +146,16 @@ def main():
     transcript = d.get("transcript_path")
     msg, title = "", ""
     if ev == "Stop":
-        msg, title, outcome = scan_transcript(transcript, full=True)
+        msg, title, outcome = scan_transcript(transcript)
         msg = msg[:300]
+        # A turn killed before any reply has nothing to quote — the label
+        # then stands alone rather than trailing a bare em dash.
         if outcome == "interrupted":
-            msg = ("interrupted — " + msg)[:300]
+            msg = ("interrupted — " + msg)[:300] if msg else "interrupted"
         elif outcome == "error":
-            msg = ("ended with an error — " + msg)[:300]
+            msg = ("ended with an error — " + msg)[:300] if msg else "ended with an error"
     else:
-        _, title, _ = scan_transcript(transcript, full=False)
+        _, title, _ = scan_transcript(transcript)
         if ev == "UserPromptSubmit":
             msg = (d.get("prompt") or "").strip()[:220]
         elif ev == "Notification":

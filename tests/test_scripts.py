@@ -202,6 +202,8 @@ class RegistryTests(unittest.TestCase):
     def snapshot(self, fixture):
         env = fixture.env()
         env["AGENT_HUD_ONESHOT"] = "1"
+        # Tests must never read the real keychain or hit the live API.
+        env["AGENT_HUD_SKIP_LIMITS"] = "1"
         out = subprocess.run([sys.executable, REGISTRY], capture_output=True,
                              text=True, env=env)
         self.assertEqual(out.returncode, 0, out.stderr)

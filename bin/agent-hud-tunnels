@@ -14,14 +14,24 @@ trap 'kill 0' EXIT INT TERM
 
 while true; do
     if [ -f "$CONF" ]; then
-        while IFS= read -r h; do
+        # `|| [ -n "$h" ]`: a final line without a trailing newline still
+        # counts — read returns nonzero on it but does fill $h.
+        while IFS= read -r h || [ -n "$h" ]; do
             case "$h" in ""|\#*|*\**) continue ;; esac
             # -n is critical: without it ssh eats the rest of hosts.conf
             # from the loop's stdin and only the first host gets a tunnel.
             if ! ssh -n -o BatchMode=yes -o ConnectTimeout=8 -o PermitLocalCommand=no \
                      -o ClearAllForwardings=yes "$h" \
                      'curl -s -m 2 http://127.0.0.1:48085/health >/dev/null 2>&1' 2>/dev/null; then
+                # A half-dead tunnel (sleep, network hop) keeps the remote
+                # port bound and every replacement dies on
+                # ExitOnForwardFailure — reap our stale child for this host
+                # first. Matching -N keeps this away from interactive ssh.
+                pkill -f "ssh.*-N -R 48085:127.0.0.1:48085 $h\$" 2>/dev/null
+                # ServerAlive makes a dead tunnel tear itself down within
+                # ~45s instead of sitting on the corpse for hours.
                 ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ExitOnForwardFailure=yes \
+                    -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
                     -o PermitLocalCommand=no -N -R 48085:127.0.0.1:48085 "$h" >/dev/null 2>&1 &
             fi
         done < "$CONF"
