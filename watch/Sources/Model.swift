@@ -33,6 +33,12 @@ struct WatchSession: Decodable, Identifiable, Hashable {
         return String(format: "%dh%02d", t / 3600, (t % 3600) / 60)
     }
 
+    /// How far into the current minute the run is — the dial's fill, so the
+    /// marks sweep like a second hand and wrap on the minute.
+    func minuteFraction(plus offset: Int = 0) -> Double {
+        Double((ago + offset) % 60) / 60.0
+    }
+
     var since: String {
         if ago < 60 { return "\(ago)s" }
         if ago < 3600 { return "\(ago / 60)m" }

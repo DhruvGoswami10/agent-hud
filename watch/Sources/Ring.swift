@@ -6,15 +6,17 @@ import WatchKit
 /// number — and they leave the middle empty, which is where the one fact
 /// that matters lives. Every fifth mark is longer so the eye finds quarters
 /// without needing a scale.
+///
+/// The marks fill with the seconds of the elapsed time and wrap every
+/// minute, so the dial is literally the clock in the middle drawn round the
+/// edge. Colour carries the second fact — how full the context window is —
+/// which means one instrument says two things without saying either twice.
 struct TickDial<Center: View>: View {
     var fraction: Double            // 0…1, how far round to light up
     var color: Color
     var size: CGFloat
-    var ticks: Int = 40
-    var spinner: Bool = false       // a lone travelling mark: "still going"
+    var ticks: Int = 60
     @ViewBuilder var center: () -> Center
-
-    @State private var spin = false
 
     var body: some View {
         ZStack {
@@ -31,15 +33,6 @@ struct TickDial<Center: View>: View {
                     .offset(y: -size / 2 + max(2.6, size * 0.05))
                     .rotationEffect(.degrees(at * 360))
             }
-            if spinner {
-                Capsule()
-                    .fill(color)
-                    .frame(width: max(1.6, size * 0.022), height: max(5, size * 0.1))
-                    .offset(y: -size / 2 + max(2.4, size * 0.048))
-                    .rotationEffect(.degrees(spin ? 360 : 0))
-                    .animation(.linear(duration: 2.6).repeatForever(autoreverses: false), value: spin)
-                    .onAppear { spin = true }
-            }
             center()
         }
         .frame(width: size, height: size)
@@ -53,10 +46,10 @@ struct SessionRing: View {
     var offset: Int = 0
 
     var body: some View {
-        TickDial(fraction: min(1, Double(session.ctx) / 100),
+        // Fill = where we are in the current minute; colour = context health.
+        TickDial(fraction: session.kind == "running" ? session.minuteFraction(plus: offset) : 1,
                  color: ctxColor,
-                 size: size,
-                 spinner: session.kind == "running") {
+                 size: size) {
             VStack(spacing: 0) {
                 Text(session.elapsed(plus: offset))
                     .font(.system(size: size * 0.27, weight: .semibold, design: .rounded))

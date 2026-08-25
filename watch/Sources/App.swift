@@ -80,9 +80,9 @@ struct SessionsView: View {
                     NavigationLink(value: s) {
                         HStack(spacing: 8) {
                             // the same instrument, shrunk to a bullet
-                            TickDial(fraction: min(1, Double(s.ctx) / 100),
-                                     color: s.color, size: 26, ticks: 12,
-                                     spinner: s.kind == "running") { EmptyView() }
+                            TickDial(fraction: s.kind == "running"
+                                        ? s.minuteFraction(plus: hub.sinceSync) : 1,
+                                     color: s.color, size: 26, ticks: 12) { EmptyView() }
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(s.name)
                                     .font(.system(size: 13, weight: .semibold))
