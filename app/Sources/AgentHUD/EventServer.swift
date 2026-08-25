@@ -62,6 +62,8 @@ final class EventServer {
     private let onSessions: (RegistryReport) -> Void
     private let onMusicState: (NowPlaying) -> Void
     private let onDebug: () -> String
+    /// Compact snapshot for the watch app; falls back to {} if unset.
+    var onWatch: (() -> String)?
     /// Optional: POST /music/commands → (command, explicit tab or nil).
     var onMusicCommand: ((String, String?) -> Void)?
     let musicCommands = CommandQueue()
@@ -296,6 +298,8 @@ final class EventServer {
             onSessions(RegistryReport(host: host, entries: entries, usage: usage,
                                       hours: hours, limits: limits))
             respond(conn, status: "200 OK", body: #"{"ok":true,"sessions":\#(entries.count)}"#, origin: origin)
+        case ("GET", "/watch"):
+            respond(conn, status: "200 OK", body: onWatch?() ?? "{}", origin: origin)
         case ("GET", "/debug"):
             respond(conn, status: "200 OK", body: onDebug(), origin: origin)
         case ("GET", "/health"):

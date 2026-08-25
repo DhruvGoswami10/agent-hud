@@ -91,6 +91,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }, onDebug: {
             DispatchQueue.main.sync { MainActor.assumeIsolated { state.debugDump() } }
         })
+        server.onWatch = {
+            DispatchQueue.main.sync { MainActor.assumeIsolated { state.watchPayload() } }
+        }
         state.webMusicQueue = server.musicCommands
         server.onMusicCommand = { cmd, tab in
             Task { @MainActor in state.externalMusicCommand(cmd, tab: tab) }

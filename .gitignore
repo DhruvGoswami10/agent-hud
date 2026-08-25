@@ -6,3 +6,5 @@ hosts.json
 bootstrap.log
 *.bak*
 .DS_Store
+watch/AgentHUDWatch.xcodeproj/
+watch/build/

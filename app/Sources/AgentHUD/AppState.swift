@@ -192,6 +192,42 @@ final class AppState: ObservableObject {
         static func normalize(_ host: String) -> String { isLocal(host) ? canonicalLocal : host }
     }
 
+    /// Compact snapshot for GET /watch — a wrist has room for counts, a few
+    /// session lines and the limit bars, and nothing else. Kept separate from
+    /// /debug so the watch never has to parse the diagnostic firehose.
+    func watchPayload() -> String {
+        let sess = sessions.prefix(8).map { s -> [String: Any] in
+            ["name": sessionDisplayName(s.sessionName, project: s.project),
+             "host": Host.isLocal(s.host) ? "local" : HostAliases.display(s.host),
+             "kind": s.kind.rawValue,
+             "app": s.app,
+             "model": s.model,
+             "message": String(s.message.prefix(80)),
+             "ago": Int(Date().timeIntervalSince(s.updated)),
+             // the ring needs something bounded to draw; context is the honest one
+             "ctx": Int((s.ctxFraction ?? 0) * 100),
+             "files": s.filesChanged,
+             "added": s.linesAdded,
+             "removed": s.linesRemoved]
+        }
+        let lims = accountLimits.flatMap { acct in
+            acct.items.map { i -> [String: Any] in
+                ["label": i.label, "percent": i.percent, "plan": acct.plan,
+                 "resets": limitResetLabel(i.resetsAt)]
+            }
+        }
+        let obj: [String: Any] = [
+            "running": runningCount,
+            "attention": attentionCount,
+            "awake": awakeActive,
+            "awakeReason": awakeReason,
+            "sessions": sess,
+            "limits": lims,
+        ]
+        let data = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
+
     /// JSON snapshot for GET /debug — the observability we owe ourselves.
     func debugDump() -> String {
         let fmt = DateFormatter()

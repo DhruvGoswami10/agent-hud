@@ -1,0 +1,35 @@
+# Generated project so the watch app is reproducible from source:
+#   brew install xcodegen && cd watch && xcodegen && make -C .. watch
+name: AgentHUDWatch
+options:
+  bundleIdPrefix: dev.dhruv.agenthud
+  deploymentTarget:
+    watchOS: "11.0"
+  createIntermediateGroups: true
+targets:
+  AgentHUDWatch:
+    type: application
+    platform: watchOS
+    sources: [Sources]
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: Agent HUD
+        WKApplication: true
+        WKWatchOnly: true
+        UILaunchStoryboardName: ""
+        # The Mac HUD serves plain HTTP on loopback; the simulator shares the
+        # host's network stack, so 127.0.0.1 here is the Mac itself.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSAllowsArbitraryLoads: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.dhruv.agenthud.watch
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "4"
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
