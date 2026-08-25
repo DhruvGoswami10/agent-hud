@@ -33,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The playground opens a drawn MacBook instead of fighting for the
         // real notch — there is no macOS simulator, and a VM has no cutout.
         previewController = PreviewWindowController(state: state)
-        if Playground.on {
+        if Playground.lid {
             NSApp.setActivationPolicy(.regular)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.previewController.show() }
         }

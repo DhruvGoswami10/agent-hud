@@ -39,6 +39,11 @@ enum Playground {
     /// wears a PLAYGROUND tag so it is never mistaken for the live one.
     static var dropY: CGFloat { on ? 180 : 0 }
     static var offsetX: CGFloat { 0 }
+
+    /// The drawn-MacBook window is opt-in. It renders the same AppState as
+    /// the floating panel, so having both up shows you the same panel twice —
+    /// which is confusing rather than useful. `make preview` asks for it.
+    static var lid: Bool { ProcessInfo.processInfo.environment["AGENT_HUD_PREVIEW"] == "1" }
 }
 
 enum HostAliases {

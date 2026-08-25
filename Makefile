@@ -4,7 +4,7 @@ BIN := app/.build/release/AgentHUD
 # update check has nothing to compare against otherwise.
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: build bundle run playground hooks hooks-cursor test clean uninstall update
+.PHONY: build bundle run playground preview hooks hooks-cursor test clean uninstall update
 
 build:
 	cd app && swift build -c release
@@ -31,7 +31,15 @@ playground: bundle
 	codesign --force --sign - $(PLAY)
 	-pkill -f "AgentHUD-Playground" 2>/dev/null || true
 	AGENT_HUD_PLAYGROUND=1 open -n $(PLAY)
-	@echo "playground on :48086, hanging below the notch — the live HUD is untouched"
+	@echo "playground on :48086, floating clear of the notch — the live HUD is untouched"
+
+# Same sandbox, but framed in a drawn MacBook window instead of floating.
+# One or the other: both at once renders the same panel twice.
+preview: playground
+	@sleep 1
+	-pkill -f "AgentHUD-Playground" 2>/dev/null || true
+	AGENT_HUD_PLAYGROUND=1 AGENT_HUD_PREVIEW=1 open -n $(PLAY)
+	@echo "MacBook preview window open"
 
 run: bundle
 	-killall AgentHUD 2>/dev/null || true
