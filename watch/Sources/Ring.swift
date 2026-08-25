@@ -1,64 +1,72 @@
 import SwiftUI
 import WatchKit
 
-/// The watch's own idea, not a shrunk panel: a round face deserves a round
-/// readout. The ring is context used — bounded, honest, and the number that
-/// decides whether a session is near the end of its rope. The timer in the
-/// middle is elapsed time, which is unbounded and so must never be a ring.
-struct SessionRing: View {
-    let session: WatchSession
-    /// Sized off the real screen rather than a guess: the 40mm SE and the
-    /// 49mm Ultra differ by ~30pt of width, and a fixed number clips on one
-    /// of them. Everything the ring draws stays inside this box.
-    var size: CGFloat = min(WKInterfaceDevice.current().screenBounds.width * 0.66, 128)
-    /// Seconds since the last poll, so the clock ticks every second.
-    var offset: Int = 0
+/// A tick dial rather than a solid ring. Marks read as an instrument — you
+/// take the level from how far round the lit ones go, without reading a
+/// number — and they leave the middle empty, which is where the one fact
+/// that matters lives. Every fifth mark is longer so the eye finds quarters
+/// without needing a scale.
+struct TickDial<Center: View>: View {
+    var fraction: Double            // 0…1, how far round to light up
+    var color: Color
+    var size: CGFloat
+    var ticks: Int = 40
+    var spinner: Bool = false       // a lone travelling mark: "still going"
+    @ViewBuilder var center: () -> Center
 
-    @State private var sweep = false
-
-    private var fraction: Double { min(1, Double(session.ctx) / 100) }
+    @State private var spin = false
 
     var body: some View {
         ZStack {
-            Circle()
-                .stroke(.white.opacity(0.12), lineWidth: size * 0.075)
-
-            // Context: fills clockwise, turns amber as the window closes.
-            Circle()
-                .trim(from: 0, to: fraction)
-                .stroke(ctxColor, style: StrokeStyle(lineWidth: size * 0.075, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .animation(.easeOut(duration: 0.6), value: fraction)
-
-            // A working session gets a travelling arc just inside the track —
-            // the only honest way to show elapsed time with no known end.
-            // Inside, not outside, so nothing can spill past the bezel.
-            if session.kind == "running" {
-                Circle()
-                    .trim(from: 0, to: 0.12)
-                    .stroke(session.color, style: StrokeStyle(lineWidth: size * 0.026, lineCap: .round))
-                    .frame(width: size * 0.82, height: size * 0.82)
-                    .rotationEffect(.degrees(sweep ? 360 : 0))
-                    .animation(.linear(duration: 2.4).repeatForever(autoreverses: false), value: sweep)
-                    .onAppear { sweep = true }
+            ForEach(0..<ticks, id: \.self) { i in
+                let at = Double(i) / Double(ticks)
+                let major = i % 5 == 0
+                Capsule()
+                    .fill(at < fraction ? color : Color.white.opacity(0.15))
+                    // Floors matter: at list-row sizes the proportional width
+                    // works out under half a point and the dial disappears.
+                    .frame(width: max(1.3, size * 0.017),
+                           height: max(major ? 4 : 2.6,
+                                       major ? size * 0.085 : size * 0.055))
+                    .offset(y: -size / 2 + max(2.6, size * 0.05))
+                    .rotationEffect(.degrees(at * 360))
             }
+            if spinner {
+                Capsule()
+                    .fill(color)
+                    .frame(width: max(1.6, size * 0.022), height: max(5, size * 0.1))
+                    .offset(y: -size / 2 + max(2.4, size * 0.048))
+                    .rotationEffect(.degrees(spin ? 360 : 0))
+                    .animation(.linear(duration: 2.6).repeatForever(autoreverses: false), value: spin)
+                    .onAppear { spin = true }
+            }
+            center()
+        }
+        .frame(width: size, height: size)
+    }
+}
 
-            VStack(spacing: 1) {
+/// The whole of screen one: what's running, and for how long.
+struct SessionRing: View {
+    let session: WatchSession
+    var size: CGFloat = min(WKInterfaceDevice.current().screenBounds.width * 0.74, 150)
+    var offset: Int = 0
+
+    var body: some View {
+        TickDial(fraction: min(1, Double(session.ctx) / 100),
+                 color: ctxColor,
+                 size: size,
+                 spinner: session.kind == "running") {
+            VStack(spacing: 0) {
                 Text(session.elapsed(plus: offset))
-                    .font(.system(size: size * 0.26, weight: .semibold, design: .rounded))
+                    .font(.system(size: size * 0.27, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(.white)
                 Text(session.kind == "running" ? "working" : session.kind)
-                    .font(.system(size: size * 0.088, weight: .medium))
+                    .font(.system(size: size * 0.082, weight: .medium))
                     .foregroundStyle(session.color)
-                if session.ctx > 0 {
-                    Text("\(session.ctx)% context")
-                        .font(.system(size: size * 0.078))
-                        .foregroundStyle(.secondary)
-                }
             }
         }
-        .frame(width: size, height: size)
     }
 
     private var ctxColor: Color {
@@ -68,56 +76,26 @@ struct SessionRing: View {
     }
 }
 
-/// Tapping a session opens this: the ring, then what it actually did.
+/// Tapping a row: the same dial, plus the few facts a row can't hold.
 struct SessionDetail: View {
     let session: WatchSession
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 12) {
-                SessionRing(session: session)
-                    .padding(.top, 4)
-
-                Text(session.name)
-                    .font(.system(size: 15, weight: .bold))
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-
-                HStack(spacing: 6) {
-                    Text(session.host)
-                    if !session.model.isEmpty {
-                        Text("·")
-                        Text(session.model).lineLimit(1)
-                    }
-                }
+        VStack(spacing: 7) {
+            SessionRing(session: session,
+                        size: min(WKInterfaceDevice.current().screenBounds.width * 0.60, 118))
+            Text(session.name)
+                .font(.system(size: 14, weight: .bold))
+                .lineLimit(1)
+            Text("\(session.ctx)% context · \(session.host)")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
-
-                if session.files > 0 {
-                    HStack(spacing: 8) {
-                        Text("\(session.files) file\(session.files == 1 ? "" : "s")")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("+\(session.added)")
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .foregroundStyle(Color(red: 0.4, green: 0.85, blue: 0.5))
-                        Text("−\(session.removed)")
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .foregroundStyle(Color(red: 1, green: 0.48, blue: 0.45))
-                    }
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 10)
-                    .background(Capsule().fill(.white.opacity(0.09)))
-                }
-
-                if !session.message.isEmpty {
-                    Text(session.message)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(4)
-                }
+            if session.files > 0 {
+                Text("\(session.files) files  +\(session.added)  −\(session.removed)")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 4)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

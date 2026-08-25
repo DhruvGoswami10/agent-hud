@@ -29,61 +29,37 @@ struct RootView: View {
     }
 }
 
-// MARK: - now — one session, the whole screen
+// MARK: - now — one dial, no scrolling
 
-/// Screen one is a single answer: what is running, and for how long. The
-/// clock ticks every second (the Mac only reports every three), because a
-/// timer that jumps in threes doesn't read as live.
+/// Screen one answers one question and stops. Everything that used to sit
+/// under here (files changed, the message) moved to the detail view, because
+/// a wrist screen you have to scroll is a screen you didn't design.
 struct NowView: View {
     @EnvironmentObject var hub: Hub
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 10) {
-                if let s = hub.snap.focus {
-                    SessionRing(session: s, offset: hub.sinceSync)
-                        .padding(.top, 2)
-                    Text(s.name)
-                        .font(.system(size: 15, weight: .bold))
-                        .multilineTextAlignment(.center)
-                        .lineLimit(2)
-                    Text(hub.snap.running > 1
-                         ? "+\(hub.snap.running - 1) more working"
-                         : s.host)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.secondary)
-                    if s.files > 0 {
-                        HStack(spacing: 7) {
-                            Text("\(s.files) files").font(.system(size: 11, weight: .semibold))
-                            Text("+\(s.added)")
-                                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                                .foregroundStyle(Color(red: 0.4, green: 0.85, blue: 0.5))
-                            Text("−\(s.removed)")
-                                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                                .foregroundStyle(Color(red: 1, green: 0.48, blue: 0.45))
-                        }
-                        .padding(.vertical, 5).padding(.horizontal, 9)
-                        .background(Capsule().fill(.white.opacity(0.09)))
-                    }
-                } else {
-                    VStack(spacing: 8) {
-                        Image(systemName: hub.reachable ? "moon.zzz.fill" : "wifi.slash")
-                            .font(.system(size: 30))
-                            .foregroundStyle(.secondary)
-                        Text(hub.reachable ? "nothing running" : "can't reach the Mac")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.top, 34)
-                }
-                if hub.snap.awake {
-                    Label("awake · \(hub.snap.awakeReason)", systemImage: "cup.and.saucer.fill")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Color(red: 1, green: 0.76, blue: 0.35))
-                }
+        VStack(spacing: 6) {
+            if let s = hub.snap.focus {
+                SessionRing(session: s, offset: hub.sinceSync)
+                Text(s.name)
+                    .font(.system(size: 13, weight: .bold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(hub.snap.running > 1 ? "+\(hub.snap.running - 1) more · \(s.host)"
+                                          : (hub.snap.awake ? "awake · \(hub.snap.awakeReason)" : s.host))
+                    .font(.system(size: 10))
+                    .foregroundStyle(hub.snap.awake && hub.snap.running <= 1
+                                     ? Color(red: 1, green: 0.76, blue: 0.35) : .secondary)
+                    .lineLimit(1)
+            } else {
+                Image(systemName: hub.reachable ? "moon.zzz.fill" : "wifi.slash")
+                    .font(.system(size: 26))
+                    .foregroundStyle(.secondary)
+                Text(hub.reachable ? "nothing running" : "no Mac")
+                    .font(.system(size: 13)).foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 4)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -91,9 +67,6 @@ struct NowView: View {
 
 struct SessionsView: View {
     @EnvironmentObject var hub: Hub
-
-    // `-openFirst 1` pushes straight into the first session — again, so the
-    // simulator can be screenshotted without a finger.
     @State private var path = NavigationPath()
 
     var body: some View {
@@ -101,51 +74,36 @@ struct SessionsView: View {
             List {
                 if hub.snap.sessions.isEmpty {
                     Text(hub.reachable ? "no sessions" : "can't reach the Mac")
-                        .font(.system(size: 13)).foregroundStyle(.secondary)
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
                 }
-                ForEach(hub.snap.sessions) { s in
-                    NavigationLink(destination: SessionDetail(session: s)) {
-                        HStack(spacing: 9) {
-                            // A small ring per row: the same idea as the big
-                            // one, so the list reads as a set of dials.
-                            ZStack {
-                                Circle().stroke(.white.opacity(0.14), lineWidth: 3)
-                                Circle()
-                                    .trim(from: 0, to: max(0.02, Double(s.ctx) / 100))
-                                    .stroke(s.color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                                    .rotationEffect(.degrees(-90))
-                                if s.kind == "attention" {
-                                    Circle().fill(s.color).frame(width: 6, height: 6)
-                                }
-                            }
-                            .frame(width: 26, height: 26)
-
-                            VStack(alignment: .leading, spacing: 2) {
+                ForEach(hub.snap.sessions.prefix(5), id: \.id) { s in
+                    NavigationLink(value: s) {
+                        HStack(spacing: 8) {
+                            // the same instrument, shrunk to a bullet
+                            TickDial(fraction: min(1, Double(s.ctx) / 100),
+                                     color: s.color, size: 26, ticks: 12,
+                                     spinner: s.kind == "running") { EmptyView() }
+                            VStack(alignment: .leading, spacing: 1) {
                                 Text(s.name)
-                                    .font(.system(size: 14, weight: .semibold))
+                                    .font(.system(size: 13, weight: .semibold))
                                     .lineLimit(1)
-                                Text(s.kind == "running" ? "working · \(s.elapsed(plus: hub.sinceSync))" : "\(s.kind) · \(s.since)")
-                                    .font(.system(size: 10.5))
+                                Text(s.kind == "running"
+                                     ? s.elapsed(plus: hub.sinceSync) : s.since)
+                                    .font(.system(size: 10, design: .rounded))
                                     .foregroundStyle(.secondary)
                             }
                         }
-                        .padding(.vertical, 3)
                     }
                     .listRowBackground(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(s.kind == "attention" ? s.color.opacity(0.22) : Color.white.opacity(0.07))
-                    )
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(s.kind == "attention" ? s.color.opacity(0.22)
+                                                        : Color.white.opacity(0.06)))
                 }
             }
+            .listStyle(.carousel)
             .navigationTitle(hub.snap.headline)
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: WatchSession.self) { SessionDetail(session: $0) }
-            .onChange(of: hub.snap.sessions.count) { _, n in
-                if UserDefaults.standard.bool(forKey: "openFirst"),
-                   path.isEmpty, let first = hub.snap.sessions.first {
-                    path.append(first)
-                }
-            }
         }
     }
 }
@@ -156,35 +114,36 @@ struct LimitsView: View {
     @EnvironmentObject var hub: Hub
 
     var body: some View {
-        List {
+        VStack(alignment: .leading, spacing: 11) {
             if hub.snap.limits.isEmpty {
-                Text("no live limits").font(.system(size: 13)).foregroundStyle(.secondary)
-            }
-            ForEach(hub.snap.limits) { l in
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack {
-                        Text(l.label).font(.system(size: 13, weight: .semibold))
-                        Spacer()
-                        Text("\(Int(l.percent.rounded()))%")
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
-                            .foregroundStyle(l.color)
-                    }
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(.white.opacity(0.14))
-                            Capsule().fill(l.color)
-                                .frame(width: max(3, geo.size.width * min(1, l.percent / 100)))
+                Text("no live limits").font(.system(size: 12)).foregroundStyle(.secondary)
+            } else {
+                Text(hub.snap.limits.first?.plan ?? "")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                ForEach(hub.snap.limits) { l in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Text(l.label).font(.system(size: 12, weight: .semibold))
+                            Spacer()
+                            Text("\(Int(l.percent.rounded()))%")
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                                .foregroundStyle(l.color)
                         }
-                    }
-                    .frame(height: 5)
-                    if !l.resets.isEmpty {
-                        Text(l.resets).font(.system(size: 10)).foregroundStyle(.secondary)
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(.white.opacity(0.14))
+                                Capsule().fill(l.color)
+                                    .frame(width: max(3, geo.size.width * min(1, l.percent / 100)))
+                            }
+                        }
+                        .frame(height: 4)
+                        Text(l.resets).font(.system(size: 9)).foregroundStyle(.secondary)
                     }
                 }
-                .padding(.vertical, 3)
-                .listRowBackground(Color.clear)
             }
         }
-        .navigationTitle("Limits")
+        .padding(.horizontal, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 }
