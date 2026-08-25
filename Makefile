@@ -4,7 +4,7 @@ BIN := app/.build/release/AgentHUD
 # update check has nothing to compare against otherwise.
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: build bundle run hooks hooks-cursor test clean uninstall update
+.PHONY: build bundle run playground hooks hooks-cursor test clean uninstall update
 
 build:
 	cd app && swift build -c release
@@ -17,6 +17,21 @@ bundle: build
 	/usr/libexec/PlistBuddy -c "Add :AgentHUDVersion string $(VERSION)" $(APP)/Contents/Info.plist >/dev/null 2>&1 \
 	  || /usr/libexec/PlistBuddy -c "Set :AgentHUDVersion $(VERSION)" $(APP)/Contents/Info.plist
 	codesign --force --sign - $(APP)
+
+# A sandboxed copy to try things in: separate bundle id (so macOS lets both
+# run and they get separate settings), port 48086, its own reporter, and the
+# panel hung 180pt below the notch so the live one is untouched.
+PLAY := dist/AgentHUD-Playground.app
+
+playground: bundle
+	rm -rf $(PLAY)
+	cp -R $(APP) $(PLAY)
+	/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier dev.dhruv.agenthud.playground" $(PLAY)/Contents/Info.plist
+	/usr/libexec/PlistBuddy -c "Set :CFBundleName AgentHUD Playground" $(PLAY)/Contents/Info.plist
+	codesign --force --sign - $(PLAY)
+	-pkill -f "AgentHUD-Playground" 2>/dev/null || true
+	AGENT_HUD_PLAYGROUND=1 open -n $(PLAY)
+	@echo "playground on :48086, hanging below the notch — the live HUD is untouched"
 
 run: bundle
 	-killall AgentHUD 2>/dev/null || true

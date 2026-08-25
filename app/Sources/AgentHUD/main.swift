@@ -82,7 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { _ in
             Task { @MainActor in state.maintenanceSweep() }
         }
-        server = EventServer(port: 48085, onEvent: { event in
+        server = EventServer(port: Playground.port, onEvent: { event in
             Task { @MainActor in state.apply(event) }
         }, onSessions: { report in
             Task { @MainActor in state.syncRegistry(report) }
@@ -101,7 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try server.start()
         } catch {
-            NSLog("AgentHUD: failed to start event server on 48085: \(String(describing: error))")
+            NSLog("AgentHUD: failed to start event server on \(Playground.port): \(String(describing: error))")
         }
     }
 
@@ -116,11 +116,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// it resolves real session names from transcript custom-title records,
     /// which the live registry loses on resume.
     private func startLocalRegistryReporter() {
-        let kill = Process()
-        kill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        kill.arguments = ["-f", "[a]gent-hud-registry"]
-        try? kill.run()
-        kill.waitUntilExit()
+        if !Playground.on {
+            // Only the real instance may reap stray reporters — the playground
+            // sharing this would kill the live app's feed.
+            let kill = Process()
+            kill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+            kill.arguments = ["-f", "[a]gent-hud-registry"]
+            try? kill.run()
+            kill.waitUntilExit()
+        }
 
         let path = ("~/agent-hud/bin/agent-hud-registry" as NSString).expandingTildeInPath
         guard FileManager.default.isExecutableFile(atPath: path) else {
@@ -134,6 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // into two hosts.
         var env = ProcessInfo.processInfo.environment
         env["AGENT_HUD_HOST"] = "Mac"
+        if Playground.on { env["AGENT_HUD_URL"] = "http://127.0.0.1:\(Playground.port)" }
         p.environment = env
         p.standardInput = FileHandle.nullDevice
         p.standardOutput = FileHandle.nullDevice

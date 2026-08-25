@@ -23,6 +23,24 @@ func limitResetLabel(_ date: Date?, now: Date = Date()) -> String {
     return "resets \(f.string(from: date))"
 }
 
+/// A second, sandboxed copy of the HUD for trying things out: its own port,
+/// its own settings, and hung well below the real notch so both are visible
+/// at once and neither can be mistaken for the other.
+enum Playground {
+    static let on = ProcessInfo.processInfo.environment["AGENT_HUD_PLAYGROUND"] == "1"
+
+    static var port: UInt16 {
+        UInt16(ProcessInfo.processInfo.environment["AGENT_HUD_PORT"] ?? "") ?? (on ? 48086 : 48085)
+    }
+
+    /// The playground hangs from the top edge like the real one, just shifted
+    /// well to the right. Dropping it into the middle of the screen (the first
+    /// attempt) produced an unlabelled black rectangle over whatever you were
+    /// reading, which reads as a fault rather than a feature.
+    static var dropY: CGFloat { 0 }
+    static var offsetX: CGFloat { on ? 430 : 0 }
+}
+
 enum HostAliases {
     private(set) static var map: [String: String] = [:]
 

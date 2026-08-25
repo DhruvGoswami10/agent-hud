@@ -79,7 +79,8 @@ final class NotchWindowController {
         guard let screen = Self.targetScreen() else { return }
         let w = Self.canvasWidth
         let h = Self.canvasHeight
-        panel.setFrame(NSRect(x: screen.frame.midX - w / 2, y: screen.frame.maxY - h, width: w, height: h),
+        panel.setFrame(NSRect(x: screen.frame.midX - w / 2 + Playground.offsetX,
+                              y: screen.frame.maxY - h - Playground.dropY, width: w, height: h),
                        display: true)
     }
 
@@ -101,8 +102,8 @@ final class NotchWindowController {
     static let exitMargin: CGFloat = 32
 
     private static func hoverRect(_ sz: NSSize, on screen: NSScreen, margin: CGFloat) -> NSRect {
-        NSRect(x: screen.frame.midX - sz.width / 2 - margin,
-               y: screen.frame.maxY - sz.height - margin,
+        NSRect(x: screen.frame.midX - sz.width / 2 - margin + Playground.offsetX,
+               y: screen.frame.maxY - sz.height - margin - Playground.dropY,
                width: sz.width + margin * 2,
                height: sz.height + margin * 2)
     }

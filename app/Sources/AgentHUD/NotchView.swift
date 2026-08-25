@@ -360,6 +360,13 @@ private struct OpenPanel: View {
             Image(systemName: "sparkles").font(.system(size: 14)).foregroundStyle(.white)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Agent HUD").font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
+                if Playground.on {
+                    Text("PLAYGROUND · :\(Playground.port)")
+                        .font(.system(size: 8, weight: .bold)).kerning(0.8)
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(Capsule().fill(Color(red: 1, green: 0.76, blue: 0.35)))
+                }
                 Text(scopeLine).font(.system(size: 9)).foregroundStyle(.white.opacity(0.45))
             }
             Spacer()
