@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotKeyObserver: AnyCancellable?
     private var terminating = false
     private var notchController: NotchWindowController!
+    private var previewController: PreviewWindowController!
     private var statusItemController: StatusItemController!
 
     @MainActor
@@ -29,6 +30,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let state = AppState()
         self.state = state
         notchController = NotchWindowController(state: state)
+        // The playground opens a drawn MacBook instead of fighting for the
+        // real notch — there is no macOS simulator, and a VM has no cutout.
+        previewController = PreviewWindowController(state: state)
+        if Playground.on {
+            NSApp.setActivationPolicy(.regular)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.previewController.show() }
+        }
         statusItemController = StatusItemController(state: state)
         SettingsWindowController.shared = SettingsWindowController(state: state)
         Notifier.shared.setup()

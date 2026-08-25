@@ -79,6 +79,7 @@ final class NotchWindowController {
         guard let screen = Self.targetScreen() else { return }
         let w = Self.canvasWidth
         let h = Self.canvasHeight
+        if Playground.on { panel.orderOut(nil); return }   // the preview window is the stage
         panel.setFrame(NSRect(x: screen.frame.midX - w / 2 + Playground.offsetX,
                               y: screen.frame.maxY - h - Playground.dropY, width: w, height: h),
                        display: true)
