@@ -162,6 +162,8 @@ struct SessionInfo: Identifiable {
     var linesAdded: Int = 0
     var linesRemoved: Int = 0
     var topFile: String = ""
+    var totalTokens: Int = 0
+    var turns: Int = 0
 
     /// Sessions on [1m] models exceed the standard 200k window; infer it.
     var effectiveCtxLimit: Int { ctxUsed > 220_000 ? 1_000_000 : ctxLimit }

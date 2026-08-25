@@ -203,7 +203,7 @@ def snapshot():
 # each transcript is parsed once from the start, then only new bytes.
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
-_changes = {}  # sessionId -> {"offset": int, "files": {path: [added, removed]}}
+_changes = {}  # sessionId -> {"offset", "files", "tokens", "turns"}
 
 
 def _lines(s):
@@ -239,11 +239,11 @@ def file_changes(sid):
     path = transcript_for(sid)
     if not path:
         return {}
-    rec = _changes.setdefault(sid, {"offset": 0, "files": {}})
+    rec = _changes.setdefault(sid, {"offset": 0, "files": {}, "tokens": 0, "turns": 0})
     try:
         size = os.path.getsize(path)
         if size < rec["offset"]:  # rotated/truncated: start over
-            rec["offset"], rec["files"] = 0, {}
+            rec["offset"], rec["files"], rec["tokens"], rec["turns"] = 0, {}, 0, 0
         if size > rec["offset"]:
             with open(path, "rb") as f:
                 f.seek(rec["offset"])
@@ -252,7 +252,7 @@ def file_changes(sid):
                     if not line.endswith(b"\n"):
                         break  # partial write; resume here next round
                     offset = f.tell()
-                    if b'"tool_use"' not in line:
+                    if b'"tool_use"' not in line and b'"usage"' not in line:
                         continue
                     try:
                         j = json.loads(line)
@@ -260,21 +260,31 @@ def file_changes(sid):
                         continue
                     if j.get("type") != "assistant":
                         continue
+                    # Cumulative cost of the session, not the live window:
+                    # ctx_used says how full the context is, this says how
+                    # much the whole conversation has burned.
+                    u = (j.get("message") or {}).get("usage") or {}
+                    if u:
+                        rec["tokens"] += ((u.get("input_tokens") or 0)
+                                          + (u.get("cache_creation_input_tokens") or 0)
+                                          + (u.get("output_tokens") or 0))
+                        rec["turns"] += 1
                     for block in (j.get("message") or {}).get("content") or []:
                         _count_tool_use(block, rec["files"])
                 rec["offset"] = offset
     except Exception:
         return {}
     files = rec["files"]
-    if not files:
-        return {}
-    top = max(files.items(), key=lambda kv: kv[1][0] + kv[1][1])
-    return {
-        "files_changed": len(files),
-        "lines_added": sum(v[0] for v in files.values()),
-        "lines_removed": sum(v[1] for v in files.values()),
-        "top_file": os.path.basename(top[0]),
-    }
+    out = {"total_tokens": rec["tokens"], "turns": rec["turns"]}
+    if files:
+        top = max(files.items(), key=lambda kv: kv[1][0] + kv[1][1])
+        out.update({
+            "files_changed": len(files),
+            "lines_added": sum(v[0] for v in files.values()),
+            "lines_removed": sum(v[1] for v in files.values()),
+            "top_file": os.path.basename(top[0]),
+        })
+    return out
 
 
 # --- account-usage estimation (ccusage-style) ---------------------------------

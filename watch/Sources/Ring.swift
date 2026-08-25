@@ -46,18 +46,27 @@ struct SessionRing: View {
     var offset: Int = 0
 
     var body: some View {
-        // Fill = where we are in the current minute; colour = context health.
-        TickDial(fraction: session.kind == "running" ? session.minuteFraction(plus: offset) : 1,
-                 color: ctxColor,
-                 size: size) {
+        // The dial is the context window filling up — the thing that actually
+        // runs out. The middle is what the session has cost so far, which is
+        // the number you'd otherwise have to go and look up.
+        TickDial(fraction: min(1, Double(session.ctx) / 100), color: ctxColor, size: size) {
             VStack(spacing: 0) {
-                Text(session.elapsed(plus: offset))
-                    .font(.system(size: size * 0.27, weight: .semibold, design: .rounded))
+                Text(session.tokensShort)
+                    .font(.system(size: size * 0.235, weight: .semibold, design: .rounded))
                     .monospacedDigit()
+                    .contentTransition(.numericText())      // digits roll
+                    .animation(.snappy, value: session.tokens)
                     .foregroundStyle(.white)
-                Text(session.kind == "running" ? "working" : session.kind)
-                    .font(.system(size: size * 0.082, weight: .medium))
+                Text("tokens")
+                    .font(.system(size: size * 0.072, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Text(session.kind == "running" ? session.elapsed(plus: offset) : session.kind)
+                    .font(.system(size: size * 0.088, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .animation(.snappy, value: offset)
                     .foregroundStyle(session.color)
+                    .padding(.top, size * 0.02)
             }
         }
     }
@@ -80,7 +89,7 @@ struct SessionDetail: View {
             Text(session.name)
                 .font(.system(size: 14, weight: .bold))
                 .lineLimit(1)
-            Text("\(session.ctx)% context · \(session.host)")
+            Text("\(session.ctx)% context · \(session.turns) turns")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
             if session.files > 0 {
@@ -88,6 +97,11 @@ struct SessionDetail: View {
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
             }
+            // where it is, and what's driving it
+            Text("\(session.where_)\(session.model.isEmpty ? "" : " · " + session.model)")
+                .font(.system(size: 9.5))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

@@ -21,45 +21,11 @@ struct RootView: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            NowView().tag(0)          // the one that's working
-            SessionsView().tag(1)     // everything else
+            SessionsView().tag(0)     // the main screen; tap a row for its dial
+            WrappedView().tag(1)      // what the week actually looked like
             LimitsView().tag(2)       // what's left in the tank
         }
         .tabViewStyle(.verticalPage)
-    }
-}
-
-// MARK: - now — one dial, no scrolling
-
-/// Screen one answers one question and stops. Everything that used to sit
-/// under here (files changed, the message) moved to the detail view, because
-/// a wrist screen you have to scroll is a screen you didn't design.
-struct NowView: View {
-    @EnvironmentObject var hub: Hub
-
-    var body: some View {
-        VStack(spacing: 6) {
-            if let s = hub.snap.focus {
-                SessionRing(session: s, offset: hub.sinceSync)
-                Text(s.name)
-                    .font(.system(size: 13, weight: .bold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Text(hub.snap.running > 1 ? "+\(hub.snap.running - 1) more · \(s.host)"
-                                          : (hub.snap.awake ? "awake · \(hub.snap.awakeReason)" : s.host))
-                    .font(.system(size: 10))
-                    .foregroundStyle(hub.snap.awake && hub.snap.running <= 1
-                                     ? Color(red: 1, green: 0.76, blue: 0.35) : .secondary)
-                    .lineLimit(1)
-            } else {
-                Image(systemName: hub.reachable ? "moon.zzz.fill" : "wifi.slash")
-                    .font(.system(size: 26))
-                    .foregroundStyle(.secondary)
-                Text(hub.reachable ? "nothing running" : "no Mac")
-                    .font(.system(size: 13)).foregroundStyle(.secondary)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -87,10 +53,19 @@ struct SessionsView: View {
                                 Text(s.name)
                                     .font(.system(size: 13, weight: .semibold))
                                     .lineLimit(1)
-                                Text(s.kind == "running"
-                                     ? s.elapsed(plus: hub.sinceSync) : s.since)
-                                    .font(.system(size: 10, design: .rounded))
-                                    .foregroundStyle(.secondary)
+                                    .truncationMode(.middle)
+                                HStack(spacing: 4) {
+                                    Text(s.kind == "running"
+                                         ? s.elapsed(plus: hub.sinceSync) : s.since)
+                                        .monospacedDigit()
+                                        .contentTransition(.numericText())
+                                    Text("·")
+                                    Text(s.tokensShort).monospacedDigit()
+                                    Text("·")
+                                    Text(s.where_).lineLimit(1)
+                                }
+                                .font(.system(size: 9.5, design: .rounded))
+                                .foregroundStyle(.secondary)
                             }
                         }
                     }
@@ -105,6 +80,78 @@ struct SessionsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: WatchSession.self) { SessionDetail(session: $0) }
         }
+    }
+}
+
+// MARK: - wrapped — what the week actually looked like
+
+/// The one screen that isn't about right now. Everything here is measured,
+/// not estimated: token counts come from the transcripts, the peak hour from
+/// the same hourly buckets that draw the burn strip on the Mac.
+struct WrappedView: View {
+    @EnvironmentObject var hub: Hub
+
+    var body: some View {
+        let w = hub.snap.wrapped
+        ScrollView {
+            VStack(alignment: .leading, spacing: 9) {
+                Text("LAST 7 DAYS")
+                    .font(.system(size: 9, weight: .bold))
+                    .kerning(0.7)
+                    .foregroundStyle(.secondary)
+
+                stat(Wrapped.short(w.week), "tokens burned", Color(red: 0.35, green: 0.65, blue: 1.0))
+
+                HStack(spacing: 8) {
+                    small(Wrapped.short(w.day), "today")
+                    small("\(w.turns)", "turns")
+                }
+                HStack(spacing: 8) {
+                    small("\(w.files)", "files")
+                    small("\(w.hosts)", w.hosts == 1 ? "machine" : "machines")
+                }
+                if w.added + w.removed > 0 {
+                    HStack(spacing: 6) {
+                        Text("+\(w.added)")
+                            .foregroundStyle(Color(red: 0.4, green: 0.85, blue: 0.5))
+                        Text("−\(w.removed)")
+                            .foregroundStyle(Color(red: 1, green: 0.48, blue: 0.45))
+                        Text("lines").foregroundStyle(.secondary)
+                    }
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                }
+                if !w.peakHour.isEmpty {
+                    Text("busiest at \(w.peakHour) · \(Wrapped.short(w.peakTokens))")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 5)
+        }
+    }
+
+    private func stat(_ value: String, _ label: String, _ color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(value)
+                .font(.system(size: 30, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .contentTransition(.numericText())
+                .foregroundStyle(color)
+            Text(label).font(.system(size: 10)).foregroundStyle(.secondary)
+        }
+    }
+
+    private func small(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(value)
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .contentTransition(.numericText())
+            Text(label).font(.system(size: 9)).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 5).padding(.horizontal, 8)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.white.opacity(0.07)))
     }
 }
 
@@ -128,6 +175,9 @@ struct LimitsView: View {
                             Spacer()
                             Text("\(Int(l.percent.rounded()))%")
                                 .font(.system(size: 13, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                                .contentTransition(.numericText())
+                                .animation(.snappy, value: l.percent)
                                 .foregroundStyle(l.color)
                         }
                         GeometryReader { geo in

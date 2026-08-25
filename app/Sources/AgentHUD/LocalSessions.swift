@@ -19,6 +19,8 @@ struct LocalSessionEntry {
     var linesAdded: Int = 0
     var linesRemoved: Int = 0
     var topFile: String = ""
+    var totalTokens: Int = 0
+    var turns: Int = 0
 
     var isActive: Bool { status == "busy" || status == "shell" }
 }

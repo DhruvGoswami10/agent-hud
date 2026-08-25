@@ -206,6 +206,8 @@ final class AppState: ObservableObject {
              "ago": Int(Date().timeIntervalSince(s.updated)),
              // the ring needs something bounded to draw; context is the honest one
              "ctx": Int((s.ctxFraction ?? 0) * 100),
+             "tokens": s.totalTokens,
+             "turns": s.turns,
              "files": s.filesChanged,
              "added": s.linesAdded,
              "removed": s.linesRemoved]
@@ -216,7 +218,32 @@ final class AppState: ObservableObject {
                  "resets": limitResetLabel(i.resetsAt)]
             }
         }
+        let nowHour = Int(Date().timeIntervalSince1970) / 3600
+        let day = hostHours.values.reduce(0) { acc, hours in
+            acc + hours.filter { $0.key > nowHour - 24 }.values.reduce(0, +)
+        }
+        let peak = (0..<24).map { back -> (Int, Int) in
+            let h = nowHour - back
+            return (h, hostHours.values.reduce(0) { $0 + ($1[h] ?? 0) })
+        }.max(by: { $0.1 < $1.1 })
+        let peakLabel: String = {
+            guard let peak, peak.1 > 0 else { return "" }
+            let f = DateFormatter(); f.dateFormat = "HH:mm"
+            return f.string(from: Date(timeIntervalSince1970: Double(peak.0) * 3600))
+        }()
+        let wrapped: [String: Any] = [
+            "day": day,
+            "week": estD7,
+            "peakHour": peakLabel,
+            "peakTokens": peak?.1 ?? 0,
+            "files": sessions.reduce(0) { $0 + $1.filesChanged },
+            "added": sessions.reduce(0) { $0 + $1.linesAdded },
+            "removed": sessions.reduce(0) { $0 + $1.linesRemoved },
+            "turns": sessions.reduce(0) { $0 + $1.turns },
+            "hosts": Set(sessions.map(\.host)).count,
+        ]
         let obj: [String: Any] = [
+            "wrapped": wrapped,
             "running": runningCount,
             "attention": attentionCount,
             "awake": awakeActive,
@@ -765,6 +792,10 @@ final class AppState: ObservableObject {
             sessions[i].ctxUsed = e.ctxUsed
             sessions[i].lastIn = e.lastIn
             sessions[i].lastOut = e.lastOut
+        }
+        if e.totalTokens > 0 {
+            sessions[i].totalTokens = e.totalTokens
+            sessions[i].turns = e.turns
         }
         if e.filesChanged > 0 {
             sessions[i].filesChanged = e.filesChanged

@@ -14,6 +14,8 @@ struct WatchSession: Decodable, Identifiable, Hashable {
     var files: Int = 0
     var added: Int = 0
     var removed: Int = 0
+    var tokens: Int = 0
+    var turns: Int = 0
 
     var id: String { "\(host)#\(name)" }
 
@@ -39,6 +41,15 @@ struct WatchSession: Decodable, Identifiable, Hashable {
         Double((ago + offset) % 60) / 60.0
     }
 
+    /// 53,975,688 → "54.0M". A wrist has no room for grouping separators.
+    var tokensShort: String {
+        if tokens >= 1_000_000 { return String(format: "%.1fM", Double(tokens) / 1_000_000) }
+        if tokens >= 1_000 { return String(format: "%.0fk", Double(tokens) / 1_000) }
+        return "\(tokens)"
+    }
+
+    var where_: String { host == "local" ? "this Mac" : host }
+
     var since: String {
         if ago < 60 { return "\(ago)s" }
         if ago < 3600 { return "\(ago / 60)m" }
@@ -63,7 +74,20 @@ struct WatchLimit: Decodable, Identifiable {
     }
 }
 
+struct Wrapped: Decodable {
+    var day = 0, week = 0, peakTokens = 0
+    var peakHour = ""
+    var files = 0, added = 0, removed = 0, turns = 0, hosts = 0
+
+    static func short(_ n: Int) -> String {
+        if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
+        if n >= 1_000 { return String(format: "%.0fk", Double(n) / 1_000) }
+        return "\(n)"
+    }
+}
+
 struct WatchSnapshot: Decodable {
+    var wrapped = Wrapped()
     var running = 0
     var attention = 0
     var awake = false

@@ -279,7 +279,9 @@ final class EventServer {
                     filesChanged: (j["files_changed"] as? Int) ?? 0,
                     linesAdded: (j["lines_added"] as? Int) ?? 0,
                     linesRemoved: (j["lines_removed"] as? Int) ?? 0,
-                    topFile: (j["top_file"] as? String) ?? ""
+                    topFile: (j["top_file"] as? String) ?? "",
+                    totalTokens: (j["total_tokens"] as? Int) ?? 0,
+                    turns: (j["turns"] as? Int) ?? 0
                 )
             }
             let usageObj = (obj["usage"] as? [String: Any]) ?? [:]
