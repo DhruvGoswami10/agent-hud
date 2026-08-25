@@ -33,12 +33,12 @@ enum Playground {
         UInt16(ProcessInfo.processInfo.environment["AGENT_HUD_PORT"] ?? "") ?? (on ? 48086 : 48085)
     }
 
-    /// The playground hangs from the top edge like the real one, just shifted
-    /// well to the right. Dropping it into the middle of the screen (the first
-    /// attempt) produced an unlabelled black rectangle over whatever you were
-    /// reading, which reads as a fault rather than a feature.
-    static var dropY: CGFloat { 0 }
-    static var offsetX: CGFloat { on ? 430 : 0 }
+    /// The playground floats clear of the real notch, centred, so it behaves
+    /// exactly like the shipping panel — hover to expand, peeks and all —
+    /// without either instance fighting for the same strip of screen. It
+    /// wears a PLAYGROUND tag so it is never mistaken for the live one.
+    static var dropY: CGFloat { on ? 180 : 0 }
+    static var offsetX: CGFloat { 0 }
 }
 
 enum HostAliases {
