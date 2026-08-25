@@ -113,6 +113,23 @@ you. The app only ever *tells* you a release exists — updating is a command yo
 run, because the hooks, the reporter and the tunnel keeper all live in this
 repo, so the clone is the update unit, not the `.app`.
 
+## Cursor
+
+Cursor 1.7+ has its own agent hooks, so it reports in the same way:
+
+```sh
+make hooks-cursor      # writes ~/.cursor/hooks.json, additively, with a backup
+```
+
+Reload the Cursor window and its sessions appear alongside Claude Code's, with
+the Cursor mark on the card. Cursor's `stop` hook reports `completed`,
+`aborted` or `error` directly, so outcomes are exact rather than inferred —
+Claude Code needs the transcript read back to work that out.
+
+Hooked: `beforeSubmitPrompt` (working), `sessionStart`/`sessionEnd`, and
+`stop` (done, with the outcome). Nothing is blocked or slowed: the forwarder
+always answers and exits 0 even when the HUD isn't running.
+
 ## Remote machines
 
 See [docs/remote-setup.md](docs/remote-setup.md). Short version: copy `bin/` to

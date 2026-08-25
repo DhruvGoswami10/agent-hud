@@ -379,3 +379,29 @@ final class CommandRoutingTests: XCTestCase {
         XCTAssertEqual(EventServer.queryValue("a=1&tab=x", "tab"), "x")
     }
 }
+
+/// Cursor sessions arrive over the same event API but must identify as Cursor,
+/// not be guessed at from whatever model they happen to be running.
+final class CursorProviderTests: XCTestCase {
+    func testAppWinsOverModelGuessing() {
+        // A Cursor session running Claude is still a Cursor session.
+        XCTAssertEqual(Provider.detect(model: "claude-4.5-sonnet", app: "cursor"), .cursor)
+        XCTAssertEqual(Provider.detect(model: "gpt-5", app: "Cursor"), .cursor)
+        XCTAssertEqual(Provider.detect(model: "claude-fable-5"), .claude)
+    }
+
+    func testCursorMarkRenders() {
+        XCTAssertFalse(SVGPath.parse(Provider.cursor.pathData ?? "").isEmpty)
+    }
+
+    @MainActor
+    func testEventCarriesAppOntoTheCard() {
+        let s = AppState()
+        s.apply(AgentEvent(kind: .running, host: "Mac", project: "repo", sessionId: "c1",
+                           sessionName: "repo", message: "", hook: "beforeSubmitPrompt",
+                           model: "gpt-5", app: "cursor", image: nil, ts: Date()))
+        XCTAssertEqual(s.sessions.first?.app, "cursor")
+        XCTAssertEqual(s.sessions.first?.provider, .cursor)
+        XCTAssertEqual(s.sessions.first?.model, "gpt-5")
+    }
+}

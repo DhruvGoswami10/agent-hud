@@ -4,7 +4,7 @@ BIN := app/.build/release/AgentHUD
 # update check has nothing to compare against otherwise.
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: build bundle run hooks test clean uninstall update
+.PHONY: build bundle run hooks hooks-cursor test clean uninstall update
 
 build:
 	cd app && swift build -c release
@@ -24,6 +24,10 @@ run: bundle
 
 hooks:
 	python3 bin/install-hooks.py "$(CURDIR)/bin/agent-hud-send"
+
+# Cursor 1.7+ keeps its own hooks.json; reload the Cursor window afterwards.
+hooks-cursor:
+	python3 bin/install-hooks.py --cursor
 
 # App logic (Swift), the hook/reporter scripts (Python) and the extension's
 # pacing policy (node). Run before pushing.

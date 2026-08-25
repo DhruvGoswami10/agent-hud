@@ -96,6 +96,9 @@ struct AgentEvent: Identifiable {
     let sessionName: String
     let message: String
     let hook: String
+    var model: String = ""
+    /// Which tool reported this — "claude" (default), "cursor", a browser tab.
+    var app: String = ""
     let image: NSImage?
     let ts: Date
 
@@ -110,7 +113,8 @@ struct AgentEvent: Identifiable {
     /// local machine's several names into one identity at ingestion.
     func with(host newHost: String) -> AgentEvent {
         AgentEvent(kind: kind, host: newHost, project: project, sessionId: sessionId,
-                   sessionName: sessionName, message: message, hook: hook, image: image, ts: ts)
+                   sessionName: sessionName, message: message, hook: hook,
+                   model: model, app: app, image: image, ts: ts)
     }
 
     static func from(json: [String: Any]) -> AgentEvent? {
@@ -131,6 +135,8 @@ struct AgentEvent: Identifiable {
             sessionName: (json["session_name"] as? String) ?? "",
             message: ((json["message"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
             hook: (json["hook"] as? String) ?? "",
+            model: (json["model"] as? String) ?? "",
+            app: (json["app"] as? String) ?? "",
             image: image,
             ts: Date()
         )
@@ -151,6 +157,7 @@ struct SessionInfo: Identifiable {
     var ctxLimit: Int = 200_000
     var lastIn: Int = 0
     var lastOut: Int = 0
+    var app: String = ""
     var filesChanged: Int = 0
     var linesAdded: Int = 0
     var linesRemoved: Int = 0
@@ -162,7 +169,7 @@ struct SessionInfo: Identifiable {
     /// Registry and hook sources are Claude Code; browser tabs say who they are.
     var provider: Provider {
         let p = Provider.detect(model: model, project: project,
-                                sessionName: sessionName, host: host)
+                                sessionName: sessionName, host: host, app: app)
         return (p == .generic && host != "web") ? .claude : p
     }
 

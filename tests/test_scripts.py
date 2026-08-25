@@ -18,6 +18,7 @@ import unittest
 BIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin")
 PAYLOAD = os.path.join(BIN, "agent-hud-payload.py")
 REGISTRY = os.path.join(BIN, "agent-hud-registry")
+INSTALL = os.path.join(BIN, "install-hooks.py")
 
 SESSION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
@@ -278,6 +279,70 @@ class RegistryTests(unittest.TestCase):
             json.dump(data, f)
         self.assertEqual(self.snapshot(fx)["sessions"], [],
                          "sessions untouched for days are not live")
+
+
+CURSOR = os.path.join(BIN, "agent-hud-cursor")
+
+
+def run_cursor(payload, url="http://127.0.0.1:1"):
+    """Run the Cursor forwarder with the HUD deliberately unreachable."""
+    env = dict(os.environ)
+    env["AGENT_HUD_URL"] = url
+    return subprocess.run([sys.executable, CURSOR], input=json.dumps(payload),
+                          capture_output=True, text=True, env=env)
+
+
+class CursorHookTests(unittest.TestCase):
+    """Cursor 1.7+ hooks: JSON on stdin, JSON back on stdout. A notifier must
+    never block or crash the agent, whatever happens."""
+
+    def test_always_returns_valid_json_and_exit_zero(self):
+        for ev in ["stop", "beforeSubmitPrompt", "sessionStart", "afterFileEdit", "wat"]:
+            r = run_cursor({"hook_event_name": ev, "conversation_id": "c1"})
+            self.assertEqual(r.returncode, 0, ev)
+            json.loads(r.stdout)  # must parse
+
+    def test_gating_hooks_answer_allow(self):
+        """These block the agent until we reply — silence would hang Cursor."""
+        for ev in ["beforeShellExecution", "beforeMCPExecution", "beforeReadFile"]:
+            out = json.loads(run_cursor({"hook_event_name": ev}).stdout)
+            self.assertEqual(out.get("permission"), "allow", ev)
+
+    def test_malformed_stdin_does_not_crash(self):
+        env = dict(os.environ)
+        env["AGENT_HUD_URL"] = "http://127.0.0.1:1"
+        r = subprocess.run([sys.executable, CURSOR], input="not json",
+                           capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0)
+        json.loads(r.stdout)
+
+    def test_hud_being_down_is_silent(self):
+        r = run_cursor({"hook_event_name": "stop", "status": "completed"})
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stderr.strip(), "")
+
+
+class CursorInstallTests(unittest.TestCase):
+    def test_installs_additively_and_is_idempotent(self):
+        home = tempfile.mkdtemp(prefix="agenthud-cursor-")
+        self.addCleanup(shutil.rmtree, home, True)
+        path = os.path.join(home, "hooks.json")
+        # a pre-existing hook of the user's own must survive
+        with open(path, "w") as f:
+            json.dump({"version": 1, "hooks": {"stop": [{"command": "mine.sh"}]}}, f)
+
+        for _ in range(2):
+            r = subprocess.run([sys.executable, INSTALL, "--cursor", path],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+
+        cfg = json.load(open(path))
+        cmds = [h.get("command", "") for h in cfg["hooks"]["stop"]]
+        self.assertIn("mine.sh", cmds, "existing hooks must not be removed")
+        self.assertEqual(sum("agent-hud-cursor" in c for c in cmds), 1,
+                         "installing twice must not duplicate")
+        for ev in ["beforeSubmitPrompt", "sessionStart", "sessionEnd", "stop"]:
+            self.assertIn(ev, cfg["hooks"], ev)
 
 
 if __name__ == "__main__":

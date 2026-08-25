@@ -464,10 +464,15 @@ final class AppState: ObservableObject {
             sessions[i].updated = e.ts
             if !e.project.isEmpty { sessions[i].project = e.project }
             if !e.sessionName.isEmpty { sessions[i].sessionName = e.sessionName }
+            if !e.app.isEmpty { sessions[i].app = e.app }
+            if !e.model.isEmpty { sessions[i].model = e.model }
         } else {
-            sessions.append(SessionInfo(id: e.sourceKey, host: e.host, project: e.project,
-                                        sessionName: e.sessionName, kind: e.kind,
-                                        message: e.message, updated: e.ts))
+            var fresh = SessionInfo(id: e.sourceKey, host: e.host, project: e.project,
+                                    sessionName: e.sessionName, kind: e.kind,
+                                    message: e.message, updated: e.ts)
+            fresh.app = e.app
+            fresh.model = e.model
+            sessions.append(fresh)
         }
         // One count per waiting session, not per notification. Claude Code
         // fires Notification repeatedly for a single session (two permission

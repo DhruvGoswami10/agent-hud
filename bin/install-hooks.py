@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
-"""Idempotently add Agent HUD forwarder hooks to a Claude Code settings.json.
+"""Idempotently add Agent HUD forwarder hooks to Claude Code or Cursor.
 
 Usage: install-hooks.py /abs/path/to/agent-hud-send [settings.json path]
+       install-hooks.py --cursor [hooks.json path]
+
+Cursor (1.7+) keeps its own hooks.json — same idea, different shape and
+location (~/.cursor/hooks.json). --cursor wires the events the HUD cares
+about: prompt submitted, session started/ended, and the agent loop stopping
+(which reports completed / aborted / error, so outcomes come for free).
 
 Appends hook entries for UserPromptSubmit, Notification and Stop unless an
 agent-hud-send hook is already present for that event, backing the settings
@@ -16,7 +22,53 @@ import sys
 import time
 
 
+CURSOR_EVENTS = ["beforeSubmitPrompt", "sessionStart", "sessionEnd", "stop"]
+
+
+def install_cursor(argv):
+    """Add our forwarder to Cursor's hooks.json without touching other hooks."""
+    forwarder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent-hud-cursor")
+    path = argv[0] if argv else os.path.expanduser("~/.cursor/hooks.json")
+
+    cfg = {}
+    if os.path.exists(path):
+        with open(path) as f:
+            try:
+                cfg = json.load(f)
+            except ValueError:
+                cfg = {}
+        backup = "%s.bak-agenthud-%s" % (path, time.strftime("%Y%m%d-%H%M%S"))
+        shutil.copy2(path, backup)
+        print("backup: %s" % backup, file=sys.stderr)
+
+    cfg.setdefault("version", 1)
+    hooks = cfg.setdefault("hooks", {})
+    added = []
+    for ev in CURSOR_EVENTS:
+        entries = hooks.setdefault(ev, [])
+        if any("agent-hud-cursor" in (e.get("command") or "") for e in entries):
+            continue
+        entries.append({"command": forwarder, "timeout": 5})
+        added.append(ev)
+
+    if not added:
+        print("cursor hooks: none (already installed)", file=sys.stderr)
+        return
+
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp = path + ".tmp-agenthud"
+    with open(tmp, "w") as f:
+        json.dump(cfg, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+    print("cursor hooks added: %s" % ", ".join(added), file=sys.stderr)
+    print("note: reload the Cursor window to pick these up", file=sys.stderr)
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--cursor":
+        install_cursor(sys.argv[2:])
+        return
     # Hook commands run through a shell — a repo path with a space in it
     # must not word-split. quote() leaves the common no-space path as-is.
     send = shlex.quote(

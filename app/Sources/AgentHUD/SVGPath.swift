@@ -237,13 +237,14 @@ enum SVGPath {
 
 /// Which assistant a session belongs to, for the badge on session cards.
 enum Provider: String, CaseIterable {
-    case claude, openai, gemini, generic
+    case claude, openai, gemini, cursor, generic
 
     var pathData: String? {
         switch self {
         case .claude: return BrandPaths.claude
         case .openai: return BrandPaths.openai
         case .gemini: return BrandPaths.gemini
+        case .cursor: return BrandPaths.cursor
         case .generic: return nil
         }
     }
@@ -253,13 +254,17 @@ enum Provider: String, CaseIterable {
         case .claude: return Color(red: 0.85, green: 0.47, blue: 0.30)   // Claude clay
         case .openai: return Color(white: 0.93)
         case .gemini: return Color(red: 0.40, green: 0.62, blue: 0.98)
+        case .cursor: return Color(white: 0.88)
         case .generic: return Color(white: 0.75)
         }
     }
 
     /// Best-effort identification from whatever the session reported.
     static func detect(model: String = "", project: String = "",
-                       sessionName: String = "", host: String = "") -> Provider {
+                       sessionName: String = "", host: String = "",
+                       app: String = "") -> Provider {
+        // The reporting app knows what it is; only guess when it doesn't say.
+        if app.caseInsensitiveCompare("cursor") == .orderedSame { return .cursor }
         let hay = "\(model) \(project) \(sessionName) \(host)".lowercased()
         if hay.contains("gemini") || hay.contains("bard") { return .gemini }
         if hay.contains("chatgpt") || hay.contains("openai") || hay.contains("codex")

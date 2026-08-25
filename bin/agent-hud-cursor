@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""Forward Cursor agent hooks to Agent HUD.
+
+Cursor (1.7+) runs hooks as standalone processes, handing them a JSON payload
+on stdin and reading JSON back from stdout — the same shape as Claude Code's
+hooks, so this is a sibling of agent-hud-payload.py.
+
+Install with:  python3 bin/install-hooks.py --cursor
+
+Cursor's `stop` hook reports `status` as completed / aborted / error, so the
+truthful outcome comes for free here — no transcript scanning needed, unlike
+Claude Code where we have to read interrupt markers back out of the JSONL.
+
+Every path prints a JSON object and exits 0: a hook that errors or blocks
+would interfere with the agent, and a notifier must never do that.
+"""
+import json
+import os
+import socket
+import sys
+import urllib.request
+
+URL = os.environ.get("AGENT_HUD_URL", "http://127.0.0.1:48085")
+HOST = os.environ.get("AGENT_HUD_HOST") or socket.gethostname().split(".")[0]
+TIMEOUT = 2.5
+
+# Cursor event -> (our event kind, message). None means "don't report".
+KINDS = {
+    "beforeSubmitPrompt": "running",
+    "sessionStart": "running",
+    "stop": "done",
+    "sessionEnd": "done",
+}
+
+# `stop` tells us how the loop ended; keep our existing vocabulary.
+OUTCOMES = {
+    "completed": "finished",
+    "aborted": "interrupted by you",
+    "error": "ended with an error ⚠︎",
+}
+
+
+def project_of(d):
+    """Workspace folder name — what the session card shows as the project."""
+    roots = d.get("workspace_roots") or []
+    if roots:
+        return os.path.basename(str(roots[0]).rstrip("/")) or "workspace"
+    cwd = d.get("cwd") or ""
+    return os.path.basename(cwd.rstrip("/")) if cwd else "cursor"
+
+
+def post(body):
+    try:
+        req = urllib.request.Request(
+            URL + "/event", data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=TIMEOUT).read()
+    except Exception:
+        pass  # the HUD being down must never be Cursor's problem
+
+
+def main():
+    try:
+        d = json.loads(sys.stdin.read() or "{}")
+    except Exception:
+        print("{}")
+        return
+
+    event = d.get("hook_event_name") or ""
+    kind = KINDS.get(event)
+    if kind:
+        message = ""
+        if event == "beforeSubmitPrompt":
+            message = (d.get("prompt") or "").strip()[:220]
+        elif event == "stop":
+            message = OUTCOMES.get(d.get("status") or "", "finished")
+        elif event == "sessionEnd":
+            message = "session ended"
+        elif event == "sessionStart":
+            message = "started"
+
+        project = project_of(d)
+        post({
+            "event": kind,
+            "host": HOST,
+            "app": "cursor",
+            "project": project,
+            # conversation_id is stable across turns — exactly what we key on.
+            "session_id": d.get("conversation_id") or d.get("session_id") or project,
+            "session_name": project,
+            "model": d.get("model") or d.get("model_id") or "",
+            "message": message,
+            "hook": event,
+        })
+
+    # Hooks that gate an action must answer or Cursor waits on us.
+    if event in ("beforeShellExecution", "beforeMCPExecution", "beforeReadFile"):
+        print(json.dumps({"permission": "allow"}))
+    else:
+        print("{}")
+
+
+if __name__ == "__main__":
+    main()
