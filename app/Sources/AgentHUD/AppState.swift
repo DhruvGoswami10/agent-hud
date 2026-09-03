@@ -255,6 +255,36 @@ final class AppState: ObservableObject {
         return String(decoding: data, as: UTF8.self)
     }
 
+    /// Resident memory and uptime, so "it got laggy after a few days" is a
+    /// measurement next time rather than a hunch. Everything that could grow
+    /// unbounded is counted beside it.
+    func healthDump() -> [String: Any] {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
+        var rss = 0
+        let ok = withUnsafeMutablePointer(to: &info) { ptr in
+            ptr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        if ok == KERN_SUCCESS { rss = Int(info.resident_size) }
+        let clipBytes = clipboard.reduce(0) { $0 + ($1.imageData?.count ?? 0) + $1.text.utf8.count }
+        return [
+            "rssMB": rss / 1_048_576,
+            "uptimeMin": Int(Date().timeIntervalSince(startedAt) / 60),
+            "events": events.count,
+            "sessions": sessions.count,
+            "clipboardItems": clipboard.count,
+            "clipboardMB": clipBytes / 1_048_576,
+            "runStarts": runStarts.count,
+            "latestEntries": latestEntries.count,
+            "hostHourBuckets": hostHours.values.reduce(0) { $0 + $1.count },
+            "webMusicTabs": webStates.count,
+        ]
+    }
+
+    let startedAt = Date()
+
     /// JSON snapshot for GET /debug — the observability we owe ourselves.
     func debugDump() -> String {
         let fmt = DateFormatter()
@@ -294,6 +324,7 @@ final class AppState: ObservableObject {
                       "assertionAlive": Caffeine.shared.assertionAlive,
                       "jiggleAuthorized": Caffeine.shared.jiggleAuthorized],
             "hostLastReport": hostLastReport.mapValues { "\(Int(Date().timeIntervalSince($0)))s ago" },
+            "health": healthDump(),
             "music": [
                 "bar": nowPlaying.map {
                     "\($0.app) · \($0.title) · \($0.playing ? "playing" : "paused") · tab=\($0.tab.isEmpty ? "legacy" : $0.tab)"

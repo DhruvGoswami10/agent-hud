@@ -112,7 +112,6 @@ struct NotchShape: InsettableShape {
 private struct CollapsedStrip: View {
     @ObservedObject var state: AppState
     let metrics: NotchWindowController.Metrics
-    @State private var pulse = false
 
     /// Idle is normally invisible — the notch is the notch. With the resting
     /// indicator on, idle instead shows a very dim neutral mark, so the HUD
@@ -127,36 +126,70 @@ private struct CollapsedStrip: View {
 
     var body: some View {
         if showing {
-            Group {
-                if state.sideBars {
-                    HStack {
-                        sideBar
-                        Spacer()
-                        sideBar
-                    }
-                    .padding(.horizontal, 3)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    Capsule()
-                        .fill(tint)
-                        .frame(height: 2.5)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 1)
-                        .blur(radius: 0.6)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            IndicatorMarks(sideBars: state.sideBars,
+                           tint: tint,
+                           notchHeight: metrics.notchHeight,
+                           breathing: state.aggregate == .running,
+                           restingOpacity: restingOpacity)
+        }
+    }
+}
+
+/// The indicator itself. Plain values in, nothing observed: an animation frame
+/// repaints these capsules and stops there. Driven from CollapsedStrip it
+/// invalidated that view — and the root's body with it — sixty times a second,
+/// which is how two 3pt bars came to cost double-digit CPU all day.
+private struct IndicatorMarks: View {
+    let sideBars: Bool
+    let tint: Color
+    let notchHeight: CGFloat
+    let breathing: Bool
+    let restingOpacity: Double
+
+    @State private var pulse = false
+
+    var body: some View {
+        Group {
+            if sideBars {
+                HStack {
+                    bar
+                    Spacer()
+                    bar
                 }
+                .padding(.horizontal, 3)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Capsule()
+                    .fill(tint)
+                    .frame(height: 2.5)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 1)
+                    .blur(radius: 0.6)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             }
-            .opacity(state.aggregate == .running && pulse ? 0.3 : restingOpacity)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { pulse = true }
-            }
+        }
+        .opacity(breathing && pulse ? 0.3 : restingOpacity)
+        // Only breathe while something is running: a repeatForever animation
+        // keeps SwiftUI's display link alive for as long as it exists.
+        .onAppear { sync() }
+        .onChange(of: breathing) { _, _ in sync() }
+        .onDisappear { pulse = false }
+    }
+
+    private func sync() {
+        if breathing {
+            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { pulse = true }
+        } else {
+            // A non-repeating animation is what actually cancels the repeat;
+            // clearing the flag alone leaves the driver running.
+            withAnimation(.linear(duration: 0.12)) { pulse = false }
         }
     }
 
-    private var sideBar: some View {
+    private var bar: some View {
         Capsule()
             .fill(tint)
-            .frame(width: 3, height: max(10, metrics.notchHeight - 12))
+            .frame(width: 3, height: max(10, notchHeight - 12))
             .blur(radius: 0.4)
     }
 }
