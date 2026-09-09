@@ -59,6 +59,10 @@ struct AccountLimits: Identifiable {
 
     var id: String { key }
     var isLive: Bool { Date().timeIntervalSince(fetchedAt) < 1800 }
+    /// True when the numbers were read off a transcript rather than fetched:
+    /// they are as new as the last turn, so "stale" is their resting state
+    /// and would be a warning about nothing.
+    var isSnapshot: Bool { source == "codex-rollout" }
 
     static func from(json: [String: Any]) -> AccountLimits? {
         guard let raw = json["items"] as? [[String: Any]], !raw.isEmpty else { return nil }

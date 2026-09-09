@@ -579,21 +579,31 @@ private struct MetersRow: View {
                     Text(limits.hosts.map(Self.hostLabel).sorted().joined(separator: " "))
                         .font(.system(size: 8.5)).foregroundStyle(.white.opacity(0.4)).lineLimit(1)
                 }
-                Text(limits.isLive ? "live" : "stale")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(limits.isLive ? .white.opacity(0.35) : EventKind.attention.color.opacity(0.8))
-                    .kerning(0.6)
+                if limits.isSnapshot {
+                    Text("as of \(Self.clock.string(from: limits.fetchedAt))")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.35)).kerning(0.6)
+                } else {
+                    Text(limits.isLive ? "live" : "stale")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(limits.isLive ? .white.opacity(0.35) : EventKind.attention.color.opacity(0.8))
+                        .kerning(0.6)
+                }
             }
             ForEach(limits.items) { limitRow($0, compact: compact) }
         }
         .padding(compact ? 8 : 10)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hudCard))
-        .help(limits.source == "codex-rollout"
+        .help(limits.isSnapshot
               // Codex publishes its numbers with each turn rather than on
               // demand, so this reading is as new as the last thing it ran.
               ? "Codex rate limits as of the last turn on this account"
               : "Live rate-limit utilisation for \(limits.accountName.isEmpty ? "this account" : limits.accountName)")
     }
+
+    static let clock: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
+    }()
 
     static func hostLabel(_ host: String) -> String {
         AppState.Host.isLocal(host) ? "mac" : HostAliases.display(host)
