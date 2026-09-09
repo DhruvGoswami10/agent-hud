@@ -63,17 +63,28 @@ final class AccountLimitsTests: XCTestCase {
 
 @MainActor
 final class LimitsSyncTests: XCTestCase {
-    private func report(host: String, fetchedAt: Date, percent: Double,
-                        account: String = "work-uuid", name: String = "Dhruv",
-                        plan: String = "Max 20x") -> RegistryReport {
-        let limits = AccountLimits.from(json: [
+    private func card(_ percent: Double, account: String = "work-uuid",
+                      name: String = "Dhruv", plan: String = "Max 20x",
+                      fetchedAt: Date = Date(), provider: String = "claude",
+                      retention: Double? = nil) -> AccountLimits? {
+        var json: [String: Any] = [
             "source": "api",
+            "provider": provider,
             "fetched_at": fetchedAt.timeIntervalSince1970,
             "account": ["uuid": account, "name": name, "plan": plan],
             "items": [["kind": "session", "label": "5h", "percent": percent,
                        "severity": "normal", "resets_at": ""]],
-        ])
-        return RegistryReport(host: host, entries: [], limits: limits)
+        ]
+        if let retention { json["retention_seconds"] = retention }
+        return AccountLimits.from(json: json)
+    }
+
+    private func report(host: String, fetchedAt: Date, percent: Double,
+                        account: String = "work-uuid", name: String = "Dhruv",
+                        plan: String = "Max 20x") -> RegistryReport {
+        let limits = card(percent, account: account, name: name, plan: plan,
+                          fetchedAt: fetchedAt)
+        return RegistryReport(host: host, entries: [], limits: [limits].compactMap { $0 })
     }
 
     /// Limits are account-wide, so within one account the freshest reading
@@ -121,6 +132,47 @@ final class LimitsSyncTests: XCTestCase {
         }
         XCTAssertEqual(s.accountLimits.count, 1)
         XCTAssertEqual(s.accountLimits.first?.hosts, ["Mac", "box6", "box54"])
+    }
+
+    /// One machine, two assistants: the Claude card and the Codex card are
+    /// separate accounts and must both stand.
+    func testClaudeAndCodexCoexistOnOneMachine() {
+        let s = AppState()
+        let claude = card(40)
+        let codex = card(4, account: "codex:acct-1", name: "me@example.com",
+                         plan: "Business Prolite", provider: "openai",
+                         retention: 86400)
+        s.syncRegistry(RegistryReport(host: "mac", entries: [],
+                                      limits: [claude, codex].compactMap { $0 }))
+        XCTAssertEqual(s.accountLimits.count, 2)
+        XCTAssertEqual(s.accountLimits.first { $0.key == "codex:acct-1" }?.provider, .openai)
+    }
+
+    /// The Anthropic usage API blips and the report arrives with only the
+    /// Codex reading — the Claude card must not be evicted for it.
+    func testOneProvidersOutageDoesNotEvictTheOther() {
+        let s = AppState()
+        let claude = card(40)
+        let codex = card(4, account: "codex:acct-1", provider: "openai", retention: 86400)
+        s.syncRegistry(RegistryReport(host: "mac", entries: [],
+                                      limits: [claude, codex].compactMap { $0 }))
+        s.syncRegistry(RegistryReport(host: "mac", entries: [],
+                                      limits: [codex].compactMap { $0 }))
+        XCTAssertEqual(s.accountLimits.count, 2, "a missing Claude reading is not a logout")
+    }
+
+    /// Codex only publishes numbers when a turn runs, so its card is allowed
+    /// to outlive the hour that a live-fetched Claude reading gets.
+    func testCodexReadingOutlivesTheDefaultRetention() {
+        let s = AppState()
+        let old = Date(timeIntervalSinceNow: -7200)
+        let claude = card(40, fetchedAt: old)
+        let codex = card(4, account: "codex:acct-1", fetchedAt: old,
+                         provider: "openai", retention: 86400)
+        s.syncRegistry(RegistryReport(host: "mac", entries: [],
+                                      limits: [claude, codex].compactMap { $0 }))
+        XCTAssertEqual(s.accountLimits.map(\.key), ["codex:acct-1"])
+        XCTAssertFalse(s.accountLimits[0].isLive, "and it says so: two hours old")
     }
 
     func testReportWithoutLimitsKeepsPrevious() {

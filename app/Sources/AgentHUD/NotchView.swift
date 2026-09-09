@@ -561,9 +561,14 @@ private struct MetersRow: View {
     private func realLimits(_ limits: AccountLimits, compact: Bool) -> some View {
         VStack(alignment: .leading, spacing: compact ? 5 : 7) {
             HStack(spacing: 8) {
-                BrandMark(provider: .claude, size: compact ? 13 : 15)
-                Text(limits.plan.isEmpty ? "Claude" : limits.plan)
+                BrandMark(provider: limits.provider, size: compact ? 13 : 15)
+                Text(limits.provider.displayName)
                     .font(.system(size: compact ? 10.5 : 11, weight: .semibold)).foregroundStyle(.white)
+                if !limits.plan.isEmpty {
+                    Text(limits.plan)
+                        .font(.system(size: compact ? 10.5 : 11)).foregroundStyle(.white.opacity(0.7))
+                        .lineLimit(1).layoutPriority(1)
+                }
                 if !limits.accountName.isEmpty {
                     Text("· \(limits.accountName)")
                         .font(.system(size: 10)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
@@ -583,7 +588,11 @@ private struct MetersRow: View {
         }
         .padding(compact ? 8 : 10)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hudCard))
-        .help("Live rate-limit utilisation for \(limits.accountName.isEmpty ? "this account" : limits.accountName)")
+        .help(limits.source == "codex-rollout"
+              // Codex publishes its numbers with each turn rather than on
+              // demand, so this reading is as new as the last thing it ran.
+              ? "Codex rate limits as of the last turn on this account"
+              : "Live rate-limit utilisation for \(limits.accountName.isEmpty ? "this account" : limits.accountName)")
     }
 
     static func hostLabel(_ host: String) -> String {

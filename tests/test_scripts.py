@@ -6,6 +6,7 @@ they cover exactly what Claude Code's hooks will hit in production. Run with:
 
     python3 tests/test_scripts.py        (or: make test)
 """
+import calendar
 import json
 import os
 import shutil
@@ -279,6 +280,128 @@ class RegistryTests(unittest.TestCase):
             json.dump(data, f)
         self.assertEqual(self.snapshot(fx)["sessions"], [],
                          "sessions untouched for days are not live")
+
+
+def load_registry():
+    """Import the reporter as a module — it has no .py suffix, and these tests
+    poke at one function rather than the whole POST cycle."""
+    import importlib.util
+    from importlib.machinery import SourceFileLoader
+    loader = SourceFileLoader("agent_hud_registry", REGISTRY)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def fake_jwt(claims):
+    """An unsigned id_token: the reporter only reads the claim segment."""
+    import base64
+    body = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+    return "header." + body + ".signature"
+
+
+def token_count_line(percent, minutes=10080, resets_at=1789541075, ts=None,
+                     secondary=None):
+    return json.dumps({
+        "timestamp": ts or time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+        "type": "event_msg",
+        "payload": {
+            "type": "token_count",
+            "info": {"total_token_usage": {"total_tokens": 16103},
+                     "model_context_window": 258400},
+            "rate_limits": {
+                "limit_id": "codex",
+                "primary": {"used_percent": percent, "window_minutes": minutes,
+                            "resets_at": resets_at},
+                "secondary": secondary,
+                "plan_type": "self_serve_business_prolite",
+                "rate_limit_reached_type": None,
+            },
+        },
+    })
+
+
+class CodexLimitsTests(unittest.TestCase):
+    """Codex has no usage endpoint. It staples the server's own rate_limits
+    block onto every token_count event of the session rollout, so that file is
+    the only place the numbers exist locally."""
+
+    def setUp(self):
+        self.mod = load_registry()
+        self.home = tempfile.mkdtemp(prefix="agenthud-codex-")
+        self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
+        day = os.path.join(self.home, "sessions", "2026", "09", "09")
+        os.makedirs(day)
+        self.rollout = os.path.join(day, "rollout-2026-09-09T12-00-00-sid.jsonl")
+        self.mod.CODEX_SESSIONS = os.path.join(self.home, "sessions")
+        self.mod.CODEX_AUTH = os.path.join(self.home, "auth.json")
+        with open(self.mod.CODEX_AUTH, "w") as f:
+            json.dump({"tokens": {"account_id": "acct-1",
+                                  "id_token": fake_jwt({"email": "me@example.com"})}}, f)
+        # The reporter refuses to touch credentials under this flag; these
+        # tests are exercising exactly that path, so lift it for the duration.
+        prev = os.environ.pop("AGENT_HUD_SKIP_LIMITS", None)
+        if prev is not None:
+            self.addCleanup(os.environ.__setitem__, "AGENT_HUD_SKIP_LIMITS", prev)
+
+    def write(self, lines):
+        with open(self.rollout, "w") as f:
+            f.write(json.dumps({"type": "session_meta", "payload": {
+                "session_id": "sid-1", "cwd": self.home, "model": "gpt-5"}}) + "\n")
+            f.write("\n".join(lines) + "\n")
+        self.mod.codex_snapshot()   # this is what harvests the reading
+
+    def test_rate_limits_become_a_limits_card(self):
+        self.write([token_count_line(4.0)])
+        lim = self.mod.codex_limits()
+        self.assertEqual(lim["provider"], "openai")
+        self.assertEqual(lim["account"]["uuid"], "codex:acct-1")
+        self.assertEqual(lim["account"]["name"], "me@example.com")
+        self.assertEqual(lim["account"]["plan"], "Business Prolite")
+        self.assertEqual(len(lim["items"]), 1)
+        item = lim["items"][0]
+        self.assertEqual(item["label"], "Week")
+        self.assertEqual(item["percent"], 4.0)
+        self.assertEqual(item["severity"], "normal")
+        self.assertEqual(item["resets_at"], "2026-09-16T06:44:35Z")
+
+    def test_both_windows_are_reported(self):
+        self.write([token_count_line(
+            12.0, minutes=300,
+            secondary={"used_percent": 80.0, "window_minutes": 10080,
+                       "resets_at": 1789541075})])
+        items = self.mod.codex_limits()["items"]
+        self.assertEqual([i["label"] for i in items], ["5h", "Week"])
+        self.assertEqual(items[1]["severity"], "warning")
+
+    def test_newest_reading_wins(self):
+        """Every turn appends another block; only the last one is current."""
+        self.write([token_count_line(4.0, ts="2026-09-09T08:00:00.000Z"),
+                    token_count_line(97.0, ts="2026-09-09T09:00:00.000Z")])
+        item = self.mod.codex_limits()["items"][0]
+        self.assertEqual(item["percent"], 97.0)
+        self.assertEqual(item["severity"], "critical")
+
+    def test_reading_is_dated_by_the_record_not_the_file(self):
+        """The card ages against when Codex last said something, so a rollout
+        touched for other reasons can't make a stale number look fresh."""
+        self.write([token_count_line(4.0, ts="2026-09-09T08:00:00.000Z")])
+        self.assertEqual(self.mod.codex_limits()["fetched_at"],
+                         calendar.timegm((2026, 9, 9, 8, 0, 0)))
+        self.assertEqual(self.mod.codex_limits()["retention_seconds"], 86400)
+
+    def test_no_rate_limits_means_no_card(self):
+        self.write([json.dumps({"timestamp": "2026-09-09T08:00:00.000Z",
+                                "type": "event_msg",
+                                "payload": {"type": "task_started"}})])
+        self.assertIsNone(self.mod.codex_limits())
+
+    def test_credentials_are_not_read_when_limits_are_skipped(self):
+        self.write([token_count_line(4.0)])
+        os.environ["AGENT_HUD_SKIP_LIMITS"] = "1"
+        self.addCleanup(os.environ.pop, "AGENT_HUD_SKIP_LIMITS", None)
+        self.assertIsNone(self.mod.codex_limits())
 
 
 CURSOR = os.path.join(BIN, "agent-hud-cursor")

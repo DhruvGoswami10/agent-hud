@@ -297,7 +297,12 @@ final class EventServer {
             if let hs = usageObj["hours"] as? [String: Int] {
                 for (k, v) in hs { if let hk = Int(k) { hours[hk] = v } }
             }
-            let limits = (obj["limits"] as? [String: Any]).flatMap(AccountLimits.from(json:))
+            // `limits` is Claude's reading (unchanged since the first build);
+            // `limits_extra` carries every other assistant's, Codex included.
+            var limits = [(obj["limits"] as? [String: Any])
+                .flatMap(AccountLimits.from(json:))].compactMap { $0 }
+            limits += ((obj["limits_extra"] as? [[String: Any]]) ?? [])
+                .compactMap(AccountLimits.from(json:))
             onSessions(RegistryReport(host: host, entries: entries, usage: usage,
                                       hours: hours, limits: limits))
             respond(conn, status: "200 OK", body: #"{"ok":true,"sessions":\#(entries.count)}"#, origin: origin)

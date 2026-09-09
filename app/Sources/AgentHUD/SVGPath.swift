@@ -249,6 +249,18 @@ enum Provider: String, CaseIterable {
         }
     }
 
+    /// What to call it on a card. `openai` only ever arrives here from Codex,
+    /// which is the name the user sees in their terminal.
+    var displayName: String {
+        switch self {
+        case .claude: return "Claude"
+        case .openai: return "Codex"
+        case .gemini: return "Gemini"
+        case .cursor: return "Cursor"
+        case .generic: return "Agent"
+        }
+    }
+
     var tint: Color {
         switch self {
         case .claude: return Color(red: 0.85, green: 0.47, blue: 0.30)   // Claude clay

@@ -42,11 +42,18 @@ struct LimitItem: Identifiable {
 
 struct AccountLimits: Identifiable {
     let key: String           // account uuid (or email) — one card per account
-    let source: String        // api | ccstatusline | claude.json
+    let source: String        // api | ccstatusline | claude.json | codex-rollout
     let fetchedAt: Date
     let accountName: String
     let plan: String
     let items: [LimitItem]
+    /// Which assistant these limits belong to: one machine can be logged into
+    /// Claude and Codex at once, and each gets its own card.
+    var provider: Provider = .claude
+    /// How long this reading stays on the HUD. Claude's is re-fetched from the
+    /// API every few minutes, so an hour is generous; Codex only publishes
+    /// numbers when a turn runs, so its reading is allowed to sit for the day.
+    var retention: TimeInterval = 3600
     /// Machines currently logged into this account; filled in by AppState.
     var hosts: Set<String> = []
 
@@ -79,7 +86,10 @@ struct AccountLimits: Identifiable {
             fetchedAt: Date(timeIntervalSince1970: (json["fetched_at"] as? Double) ?? 0),
             accountName: (account["name"] as? String) ?? "",
             plan: (account["plan"] as? String) ?? "",
-            items: items)
+            items: items,
+            // Absent on reports from an older reporter — those are Claude's.
+            provider: Provider(rawValue: (json["provider"] as? String) ?? "") ?? .claude,
+            retention: (json["retention_seconds"] as? Double) ?? 3600)
     }
 }
 
@@ -89,5 +99,6 @@ struct RegistryReport {
     let entries: [LocalSessionEntry]
     var usage: [String: Int] = [:]
     var hours: [Int: Int] = [:]
-    var limits: AccountLimits?
+    /// One entry per assistant the machine is logged into (Claude, Codex …).
+    var limits: [AccountLimits] = []
 }

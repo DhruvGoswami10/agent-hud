@@ -690,36 +690,42 @@ final class AppState: ObservableObject {
     var estD7: Int { hostUsage.values.reduce(0) { $0 + ($1["d7"] ?? 0) } }
     var estPeak: Int { hostUsage.values.reduce(0) { $0 + ($1["h5_peak"] ?? 0) } }
 
-    /// Real limits, one entry per Claude account. Each machine reports the
-    /// account it is logged into, so a work login on the Mac and a personal
-    /// login on a dev box both get their own card. Within an account the
-    /// freshest reading wins, since limits are account-wide.
+    /// Real limits, one entry per account. Each machine reports the accounts
+    /// it is logged into, so a work Claude login on the Mac, a personal one on
+    /// a dev box and a Codex login all get their own card. Within an account
+    /// the freshest reading wins, since limits are account-wide.
     @Published private(set) var accountLimits: [AccountLimits] = []
     private var limitsByAccount: [String: AccountLimits] = [:]
-    private var hostAccount: [String: String] = [:]
+    /// host -> provider -> account key. Keyed by provider so that a Claude
+    /// reading the API refused doesn't evict the machine's Codex card.
+    private var hostAccount: [String: [Provider: String]] = [:]
 
-    /// Readings older than this are dropped — an account nobody is using
-    /// shouldn't linger on the HUD.
+    /// Default lifetime of a reading — an account nobody is using shouldn't
+    /// linger on the HUD. A report may ask for longer (see `retention`).
     static let limitsRetention: TimeInterval = 3600
 
     func syncRegistry(_ report: RegistryReport) {
         let host = Host.normalize(report.host)
         syncRegistry(host: host, entries: report.entries,
                      usage: report.usage, hours: report.hours)
-        guard let limits = report.limits else { return }
-        hostAccount[host] = limits.key
-        if limits.fetchedAt >= (limitsByAccount[limits.key]?.fetchedAt ?? .distantPast) {
-            limitsByAccount[limits.key] = limits
+        for limits in report.limits {
+            hostAccount[host, default: [:]][limits.provider] = limits.key
+            if limits.fetchedAt >= (limitsByAccount[limits.key]?.fetchedAt ?? .distantPast) {
+                limitsByAccount[limits.key] = limits
+            }
         }
+        guard !report.limits.isEmpty else { return }
         rebuildAccountLimits()
     }
 
     private func rebuildAccountLimits() {
         let now = Date()
         var byAccount: [String: Set<String>] = [:]
-        for (host, key) in hostAccount { byAccount[key, default: []].insert(host) }
+        for (host, keys) in hostAccount {
+            for key in keys.values { byAccount[key, default: []].insert(host) }
+        }
         accountLimits = limitsByAccount.values
-            .filter { now.timeIntervalSince($0.fetchedAt) < Self.limitsRetention }
+            .filter { now.timeIntervalSince($0.fetchedAt) < $0.retention }
             .map { limits in
                 var l = limits
                 l.hosts = byAccount[limits.key] ?? []

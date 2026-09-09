@@ -15,7 +15,9 @@ Start remotely with:
 Debug with:
     AGENT_HUD_ONESHOT=1 ~/agent-hud/bin/agent-hud-registry
 """
+import base64
 import calendar
+import datetime
 import getpass
 import glob
 import json
@@ -296,6 +298,7 @@ def file_changes(sid):
 CODEX_SESSIONS = os.path.expanduser("~/.codex/sessions")
 CODEX_BUSY_SECONDS = 90
 _codex_meta = {}   # path -> (session_id, cwd, model)
+_codex_rate = (None, 0.0)   # (rate_limits dict, epoch of the record it came from)
 
 
 def _codex_head(path):
@@ -318,9 +321,21 @@ def _codex_head(path):
     return _codex_meta[path]
 
 
+def _codex_ts(rec):
+    """Epoch seconds for a rollout record's ISO-8601 `timestamp`."""
+    t = (rec.get("timestamp") or "").replace("Z", "+00:00")
+    try:
+        return datetime.datetime.fromisoformat(t).timestamp()
+    except Exception:
+        return 0.0
+
+
 def _codex_tail(path):
-    """Model and cumulative tokens from the end of the file."""
-    model, total = "", 0
+    """Model, cumulative tokens and the newest rate-limit reading, from the end
+    of the file. Codex staples its own `rate_limits` block onto every
+    `token_count` event — the same numbers `/status` prints — so the last one
+    in the file is this account's latest utilisation."""
+    model, total, rate, rate_ts = "", 0, None, 0.0
     try:
         with open(path, "rb") as f:
             size = os.fstat(f.fileno()).st_size
@@ -328,6 +343,8 @@ def _codex_tail(path):
             for line in f:
                 # No closing quote on the second needle: the record type is
                 # "token_usage_record", so '"token_usage"' never matched it.
+                # It also catches token_count, whose payload nests
+                # "total_token_usage" next to the rate limits we want.
                 if b'turn_context' in line or b'token_usage' in line:
                     try:
                         j = json.loads(line)
@@ -344,13 +361,23 @@ def _codex_tail(path):
                             if isinstance(u, dict) and isinstance(u.get("total_tokens"), int):
                                 total = max(total, u["total_tokens"])
                                 break
+                    elif pl.get("type") == "token_count":
+                        rl = pl.get("rate_limits")
+                        if isinstance(rl, dict):
+                            rate, rate_ts = rl, _codex_ts(j)
+                        info = pl.get("info") or {}
+                        u = info.get("total_token_usage")
+                        if isinstance(u, dict) and isinstance(u.get("total_tokens"), int):
+                            total = max(total, u["total_tokens"])
     except Exception:
         pass
-    return model, total
+    return model, total, rate, rate_ts
 
 
 def codex_snapshot():
+    global _codex_rate
     out = []
+    _codex_rate = (None, 0.0)
     if not os.path.isdir(CODEX_SESSIONS):
         return out
     now = time.time()
@@ -365,7 +392,9 @@ def codex_snapshot():
         sid, cwd, meta_model = _codex_head(path)
         if not sid:
             continue
-        model, tokens = _codex_tail(path)
+        model, tokens, rate, rate_ts = _codex_tail(path)
+        if rate and rate_ts > _codex_rate[1]:
+            _codex_rate = (rate, rate_ts)
         project = os.path.basename((cwd or "").rstrip("/")) or "codex"
         out.append({
             "sessionId": sid,
@@ -662,12 +691,99 @@ def limits():
     return None if data.get("failed") else data
 
 
+
+# --- Codex limits -------------------------------------------------------------
+# Codex has no usage endpoint we can call, but it doesn't need one: every
+# `token_count` event in the rollout carries the server's own `rate_limits`
+# block — the same numbers `codex /status` prints. codex_snapshot() picks the
+# freshest one off the tail scan it already does, so this costs no extra I/O.
+
+CODEX_AUTH = os.path.expanduser("~/.codex/auth.json")
+# A reading is only as fresh as the last turn, so unlike the Claude card (which
+# re-fetches from the API) this one is allowed to sit on the HUD for the whole
+# day the rollout scan covers. It marks itself stale after 30 minutes.
+CODEX_RETENTION = 24 * 3600
+
+
+def _codex_account():
+    """Who Codex is logged in as. The id_token is read locally for its email
+    claim only — never sent anywhere."""
+    acct = {"uuid": "codex", "name": "", "plan": ""}
+    try:
+        with open(CODEX_AUTH) as f:
+            auth = json.load(f)
+    except Exception:
+        return acct
+    tokens = auth.get("tokens") or {}
+    if tokens.get("account_id"):
+        acct["uuid"] = "codex:" + tokens["account_id"]
+    try:
+        claims = (tokens.get("id_token") or "").split(".")[1]
+        claims += "=" * (-len(claims) % 4)
+        c = json.loads(base64.urlsafe_b64decode(claims))
+        acct["name"] = c.get("email") or c.get("name") or ""
+    except Exception:
+        pass
+    return acct
+
+
+def _codex_window_label(minutes):
+    if not isinstance(minutes, int) or minutes <= 0:
+        return "limit"
+    if minutes == 300:
+        return "5h"
+    if minutes == 10080:
+        return "Week"
+    if minutes < 1440:
+        return "%dh" % (minutes // 60)
+    return "%dd" % (minutes // 1440)
+
+
+def _codex_plan(rate):
+    """`self_serve_business_prolite` is the limiter's own tier name; show it
+    the way a human would write it."""
+    plan = (rate.get("plan_type") or "").replace("self_serve_", "")
+    return " ".join(w.capitalize() for w in plan.split("_") if w)
+
+
+def codex_limits():
+    if os.environ.get("AGENT_HUD_SKIP_LIMITS"):
+        return None
+    rate, ts = _codex_rate
+    if not rate or not ts:
+        return None
+    items = []
+    for key, kind in (("primary", "primary"), ("secondary", "secondary"),
+                      ("individual_limit", "individual")):
+        w = rate.get(key)
+        if not isinstance(w, dict) or w.get("used_percent") is None:
+            continue
+        resets = ""
+        if isinstance(w.get("resets_at"), (int, float)):
+            resets = datetime.datetime.fromtimestamp(
+                w["resets_at"], datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        pct = float(w["used_percent"])
+        severity = "critical" if pct >= 95 else ("warning" if pct >= 75 else "normal")
+        items.append(_item(kind, _codex_window_label(w.get("window_minutes")),
+                           pct, severity, resets))
+    if not items:
+        return None
+    acct = _codex_account()
+    acct["plan"] = _codex_plan(rate)
+    return {"source": "codex-rollout", "provider": "openai", "fetched_at": ts,
+            "retention_seconds": CODEX_RETENTION, "account": acct, "items": items}
+
+
 def payload():
-    body = {"host": HOST, "sessions": snapshot() + codex_snapshot(),
-            "usage": usage_windows()}
+    # Sessions first: the Codex scan is what picks up its rate-limit reading.
+    codex = codex_snapshot()
+    body = {"host": HOST, "sessions": snapshot() + codex, "usage": usage_windows()}
     lim = limits()
     if lim:
         body["limits"] = lim
+    extra = [x for x in (codex_limits(),) if x]
+    if extra:
+        body["limits_extra"] = extra
     return body
 
 
