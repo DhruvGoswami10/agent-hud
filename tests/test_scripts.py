@@ -403,6 +403,61 @@ class CodexLimitsTests(unittest.TestCase):
         self.addCleanup(os.environ.pop, "AGENT_HUD_SKIP_LIMITS", None)
         self.assertIsNone(self.mod.codex_limits())
 
+class CodexSessionNameTests(unittest.TestCase):
+    """Codex sessions carry no name of their own. Falling back to the working
+    directory made every session started from $HOME show up as the user's
+    username — so the card is titled from the first thing actually typed,
+    the same way Claude Code titles its own."""
+
+    def setUp(self):
+        self.mod = load_registry()
+        self.home = tempfile.mkdtemp(prefix="agenthud-codexname-")
+        self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
+        day = os.path.join(self.home, "sessions", "2026", "09", "09")
+        os.makedirs(day)
+        self.rollout = os.path.join(day, "rollout-2026-09-09T12-00-00-sid.jsonl")
+        self.mod.CODEX_SESSIONS = os.path.join(self.home, "sessions")
+
+    def name(self, messages, cwd="/home/dhruv.goswami"):
+        with open(self.rollout, "w") as f:
+            f.write(json.dumps({"type": "session_meta", "payload": {
+                "session_id": "sid-1", "cwd": cwd, "model": "gpt-5"}}) + "\n")
+            for m in messages:
+                f.write(json.dumps({"type": "response_item", "payload": {
+                    "type": "message", "role": "user",
+                    "content": [{"type": "input_text", "text": m}]}}) + "\n")
+        self.mod._codex_meta.clear()
+        return self.mod.codex_snapshot()[0]["name"]
+
+    def test_title_comes_from_the_first_real_prompt(self):
+        self.assertEqual(
+            self.name(["<environment_context>\n  <cwd>/home/dhruv.goswami</cwd>\n</environment_context>",
+                       "check this http://10.44.252.6/nora/#queue\n\nwe have to redesign it"]),
+            "check this http://10.44.252.6/nora/#queue")
+
+    def test_injected_blocks_are_never_the_title(self):
+        """The blocks Codex prepends are markup from the first character —
+        their inner lines are not a prompt either."""
+        for junk in ("<environment_context>\n  <cwd>/x</cwd>\n</environment_context>",
+                     "<recommended_plugins>\n  <plugin>a</plugin>\n</recommended_plugins>",
+                     '<image name=[Image #1] path="/tmp/cmux-drop-1.png">',
+                     "<user_instructions>\n  be nice\n</user_instructions>"):
+            self.assertEqual(self.name([junk], cwd="/home/dhruv.goswami/agent-hud"),
+                             "agent-hud", "%r must not become a title" % junk[:30])
+
+    def test_falls_back_to_the_project_directory(self):
+        self.assertEqual(self.name([], cwd="/home/dhruv.goswami/agent-hud"), "agent-hud")
+
+    def test_long_prompts_are_cut_on_a_word_boundary(self):
+        n = self.name(["using threejs or something awesome can you build me a factory game"])
+        self.assertLessEqual(len(n), 44)
+        self.assertEqual(n, "using threejs or something awesome can you")
+
+    def test_multiline_prompt_takes_the_first_line(self):
+        self.assertEqual(self.name(["redesign the nav\n\nadesh wants the queue moved"]),
+                         "redesign the nav")
+
+
 
 CURSOR = os.path.join(BIN, "agent-hud-cursor")
 

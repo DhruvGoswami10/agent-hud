@@ -301,24 +301,59 @@ _codex_meta = {}   # path -> (session_id, cwd, model)
 _codex_rate = (None, 0.0)   # (rate_limits dict, epoch of the record it came from)
 
 
+def _codex_title(text):
+    """A card-sized title from the first thing the user actually typed.
+
+    Codex opens every session with injected blocks — <environment_context>,
+    <recommended_plugins>, <user_instructions> — and cmux pastes images in as
+    their own record. All of them are markup from the first character, which
+    a typed prompt almost never is, so that alone tells them apart."""
+    text = (text or "").strip()
+    if not text or text.startswith("<"):
+        return ""
+    line = next((" ".join(l.split()) for l in text.splitlines() if l.strip()), "")
+    if len(line) > 44:
+        line = line[:44].rsplit(" ", 1)[0] or line[:44]
+    return line
+
+
 def _codex_head(path):
-    """session_meta is always the first record; cache it, it never changes."""
+    """session_meta is always the first record, and the first user message is
+    a few records later. Codex sessions have no name of their own — without a
+    title every session started from $HOME shows up as your username."""
     if path in _codex_meta:
         return _codex_meta[path]
-    sid = cwd = model = ""
+    sid = cwd = model = title = ""
+    size = 0
     try:
+        size = os.path.getsize(path)
         with open(path, "rb") as f:
-            first = f.readline()
-        j = json.loads(first)
-        if j.get("type") == "session_meta":
-            pl = j.get("payload") or {}
-            sid = pl.get("session_id") or pl.get("id") or ""
-            cwd = pl.get("cwd") or ""
-            model = pl.get("model") or pl.get("model_provider") or ""
+            for n, line in enumerate(f):
+                if n > 400 or f.tell() > 524288:
+                    break
+                try:
+                    j = json.loads(line)
+                except Exception:
+                    continue
+                pl = j.get("payload") or {}
+                if j.get("type") == "session_meta":
+                    sid = pl.get("session_id") or pl.get("id") or ""
+                    cwd = pl.get("cwd") or ""
+                    model = pl.get("model") or pl.get("model_provider") or ""
+                elif not title and pl.get("role") == "user":
+                    for c in pl.get("content") or []:
+                        title = _codex_title(c.get("text"))
+                        if title:
+                            break
+                if sid and title:
+                    break
     except Exception:
         pass
-    _codex_meta[path] = (sid, cwd, model)
-    return _codex_meta[path]
+    # A session whose first prompt hasn't landed yet is re-read next tick —
+    # the file is still tiny then. Past that, take what we have.
+    if title or size > 1048576:
+        _codex_meta[path] = (sid, cwd, model, title)
+    return (sid, cwd, model, title)
 
 
 def _codex_ts(rec):
@@ -389,13 +424,13 @@ def codex_snapshot():
             continue
         if now - mtime > 24 * 3600:
             continue
-        sid, cwd, meta_model = _codex_head(path)
+        sid, cwd, meta_model, title = _codex_head(path)
         if not sid:
             continue
         model, tokens, rate, rate_ts = _codex_tail(path)
         if rate and rate_ts > _codex_rate[1]:
             _codex_rate = (rate, rate_ts)
-        project = os.path.basename((cwd or "").rstrip("/")) or "codex"
+        project = title or os.path.basename((cwd or "").rstrip("/")) or "codex"
         out.append({
             "sessionId": sid,
             "name": project,
