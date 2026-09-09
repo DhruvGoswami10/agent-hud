@@ -280,6 +280,7 @@ final class EventServer {
                     linesAdded: (j["lines_added"] as? Int) ?? 0,
                     linesRemoved: (j["lines_removed"] as? Int) ?? 0,
                     topFile: (j["top_file"] as? String) ?? "",
+                    app: (j["app"] as? String) ?? "",
                     totalTokens: (j["total_tokens"] as? Int) ?? 0,
                     turns: (j["turns"] as? Int) ?? 0
                 )

@@ -405,3 +405,41 @@ final class CursorProviderTests: XCTestCase {
         XCTAssertEqual(s.sessions.first?.model, "gpt-5")
     }
 }
+
+/// Codex reports through `notify` rather than a session registry, and a Codex
+/// session running GPT must not be drawn with Claude's mark.
+final class CodexProviderTests: XCTestCase {
+    func testCodexIdentifiesAsOpenAI() {
+        XCTAssertEqual(Provider.detect(app: "codex"), .openai)
+        XCTAssertEqual(Provider.detect(model: "gpt-6-astra", app: "codex"), .openai)
+        // A bare session with no app still defaults to Claude Code.
+        XCTAssertEqual(Provider.detect(model: "claude-fable-5"), .claude)
+    }
+
+    @MainActor
+    func testCodexEventCarriesItsApp() {
+        let s = AppState()
+        s.apply(AgentEvent(kind: .done, host: "Mac", project: "agent-hud", sessionId: "t1",
+                           sessionName: "agent-hud", message: "turn finished", hook: "notify",
+                           model: "gpt-6-astra", app: "codex", image: nil, ts: Date()))
+        XCTAssertEqual(s.sessions.first?.provider, .openai)
+    }
+}
+
+/// Codex sessions also arrive through the registry (the reporter reads its
+/// rollout files), and that path used to drop the app entirely.
+@MainActor
+final class CodexRegistryTests: XCTestCase {
+    func testRegistryCarriesTheReportingApp() {
+        let s = AppState()
+        var e = LocalSessionEntry(sessionId: "cx1", name: "agent-hud", cwd: "/tmp/agent-hud",
+                                  status: "busy", updatedAt: 1)
+        e.app = "codex"
+        e.model = "gpt-6-astra"
+        e.totalTokens = 16103
+        s.syncRegistry(host: "Mac", entries: [e])
+        XCTAssertEqual(s.sessions.first?.app, "codex")
+        XCTAssertEqual(s.sessions.first?.provider, .openai)
+        XCTAssertEqual(s.sessions.first?.totalTokens, 16103)
+    }
+}

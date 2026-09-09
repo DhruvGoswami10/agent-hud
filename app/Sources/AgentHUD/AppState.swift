@@ -817,6 +817,8 @@ final class AppState: ObservableObject {
     }
 
     private func applyStats(_ e: LocalSessionEntry, at i: Int) {
+        // Which tool reported it — a Codex session must not wear Claude's mark.
+        if !e.app.isEmpty { sessions[i].app = e.app }
         if !e.model.isEmpty { sessions[i].model = e.model }
         if !e.effort.isEmpty { sessions[i].effort = e.effort }
         if e.ctxUsed > 0 {

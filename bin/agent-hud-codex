@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""Forward Codex turn-end notifications to Agent HUD, then hand off.
+
+Codex has two integration points and cmux has already taken one of them: it
+launches `codex --enable hooks` with `-c hooks.Stop=…` and friends on the
+command line, which overrides anything the config file sets for those events.
+So hooks are not ours to claim inside cmux.
+
+`notify` is the other one, and cmux leaves it alone. It fires once per turn
+with a JSON argument. The catch is that it holds a single program, and yours
+is already pointed at Codex Computer Use — so this script forwards the event
+and then execs whatever was there before, with the same arguments. Nothing
+that worked stops working.
+
+Wire it up with:  python3 bin/install-hooks.py --codex
+"""
+import json
+import os
+import socket
+import subprocess
+import sys
+import urllib.request
+
+URL = os.environ.get("AGENT_HUD_URL", "http://127.0.0.1:48085")
+HOST = os.environ.get("AGENT_HUD_HOST") or socket.gethostname().split(".")[0]
+# Written by the installer: the notify program we displaced, argv and all.
+CHAIN = os.path.expanduser("~/.codex/agent-hud-chain.json")
+
+
+def post(body):
+    try:
+        req = urllib.request.Request(
+            URL + "/event", data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=2.5).read()
+    except Exception:
+        pass  # the HUD being down is never Codex's problem
+
+
+def payload(argv):
+    """Codex appends a JSON blob as the last argument; earlier ones are the
+    fixed args from the config array. Take the last thing that parses."""
+    for arg in reversed(argv):
+        try:
+            d = json.loads(arg)
+            if isinstance(d, dict):
+                return d
+        except Exception:
+            continue
+    return {}
+
+
+def handoff(argv):
+    """Run whatever `notify` pointed at before we took the slot."""
+    try:
+        with open(CHAIN) as f:
+            original = json.load(f)
+    except Exception:
+        return
+    if not original:
+        return
+    try:
+        subprocess.run(list(original) + argv, timeout=20, check=False)
+    except Exception:
+        pass
+
+
+def main():
+    argv = sys.argv[1:]
+    d = payload(argv)
+    kind = d.get("type") or ""
+
+    # agent-turn-complete is the one worth reporting; anything else Codex adds
+    # later stays silent rather than guessing at what it means.
+    if kind in ("agent-turn-complete", "turn-ended", "agent-turn-completed"):
+        msg = (d.get("last-assistant-message") or d.get("last_assistant_message") or "").strip()
+        cwd = d.get("cwd") or os.getcwd()
+        project = os.path.basename(cwd.rstrip("/")) or "codex"
+        post({
+            "event": "done",
+            "host": HOST,
+            "app": "codex",
+            "project": project,
+            "session_id": d.get("turn-id") or d.get("thread-id") or d.get("session_id") or project,
+            "session_name": project,
+            "message": msg[:300] or "turn finished",
+            "hook": "notify",
+        })
+
+    handoff(argv)
+
+
+if __name__ == "__main__":
+    main()

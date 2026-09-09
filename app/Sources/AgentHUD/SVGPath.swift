@@ -265,7 +265,8 @@ enum Provider: String, CaseIterable {
                        app: String = "") -> Provider {
         // The reporting app knows what it is; only guess when it doesn't say.
         if app.caseInsensitiveCompare("cursor") == .orderedSame { return .cursor }
-        let hay = "\(model) \(project) \(sessionName) \(host)".lowercased()
+        if app.caseInsensitiveCompare("codex") == .orderedSame { return .openai }
+        let hay = "\(model) \(project) \(sessionName) \(host) \(app)".lowercased()
         if hay.contains("gemini") || hay.contains("bard") { return .gemini }
         if hay.contains("chatgpt") || hay.contains("openai") || hay.contains("codex")
             || hay.contains("gpt") { return .openai }

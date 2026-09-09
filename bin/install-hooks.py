@@ -65,9 +65,94 @@ def install_cursor(argv):
     print("note: reload the Cursor window to pick these up", file=sys.stderr)
 
 
+CODEX_EVENTS = ["SessionStart", "UserPromptSubmit", "Stop", "PermissionRequest"]
+
+
+def install_codex(argv):
+    """Wire Agent HUD into Codex through `notify`, and optionally hooks.
+
+    Codex has two integration points and only one of them is dependable here.
+    Hooks are richer — they carry running and attention, not just turn-end —
+    but they are off unless the session is launched with `--enable hooks`,
+    they need a trust grant, and inside cmux they are overridden on the
+    command line anyway. `notify` needs no flags, no trust, and cmux leaves it
+    alone. It holds a single program, so whatever was there is saved and
+    chained rather than replaced.
+
+    Pass --with-hooks to add the hook tables as well, for sessions you launch
+    yourself with `codex --enable hooks`.
+    """
+    with_hooks = "--with-hooks" in argv
+    argv = [a for a in argv if a != "--with-hooks"]
+    here = os.path.dirname(os.path.abspath(__file__))
+    forwarder = os.path.join(here, "agent-hud-codex")
+    path = argv[0] if argv else os.path.expanduser("~/.codex/config.toml")
+    chain = os.path.expanduser("~/.codex/agent-hud-chain.json")
+
+    lines = []
+    if os.path.exists(path):
+        with open(path) as f:
+            lines = f.read().split("\n")
+        backup = "%s.bak-agenthud-%s" % (path, time.strftime("%Y%m%d-%H%M%S"))
+        shutil.copy2(path, backup)
+        print("backup: %s" % backup, file=sys.stderr)
+
+    # --- notify: take the slot, remember who had it -----------------------
+    done = []
+    notify_line = next((i for i, l in enumerate(lines)
+                        if l.strip().startswith("notify") and "=" in l), None)
+    already = any("agent-hud-codex" in l for l in lines)
+    if already:
+        print("codex: already installed", file=sys.stderr)
+        return
+
+    if notify_line is not None:
+        raw = lines[notify_line].split("=", 1)[1].strip()
+        try:
+            # TOML arrays of strings are close enough to JSON for this.
+            previous = json.loads(raw)
+        except Exception:
+            previous = []
+        with open(chain, "w") as f:
+            json.dump(previous, f)
+        if previous:
+            print("chained behind: %s" % previous[0], file=sys.stderr)
+        lines[notify_line] = 'notify = ["%s"]' % forwarder
+        done.append("notify (chained)")
+    else:
+        with open(chain, "w") as f:
+            json.dump([], f)
+        lines.insert(0, 'notify = ["%s"]' % forwarder)
+        done.append("notify")
+
+    # --- hooks: opt-in, appended as their own tables at the end -----------
+    if with_hooks:
+        hook_toml = ["", "# Added by Agent HUD — remove this block to uninstall."]
+        for ev in CODEX_EVENTS:
+            hook_toml += ["[[hooks.%s]]" % ev,
+                          "[[hooks.%s.hooks]]" % ev,
+                          'type = "command"',
+                          'command = "%s"' % forwarder,
+                          "timeout = 5000",
+                          ""]
+        lines += hook_toml
+        done.append("hooks: " + ", ".join(CODEX_EVENTS))
+
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp = path + ".tmp-agenthud"
+    with open(tmp, "w") as f:
+        f.write("\n".join(lines))
+    os.replace(tmp, path)
+    print("codex wired: %s" % " · ".join(done), file=sys.stderr)
+    print("note: restart the Codex session to pick these up", file=sys.stderr)
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--cursor":
         install_cursor(sys.argv[2:])
+        return
+    if len(sys.argv) > 1 and sys.argv[1] == "--codex":
+        install_codex(sys.argv[2:])
         return
     # Hook commands run through a shell — a repo path with a space in it
     # must not word-split. quote() leaves the common no-space path as-is.

@@ -287,6 +287,101 @@ def file_changes(sid):
     return out
 
 
+# --- Codex sessions -----------------------------------------------------------
+# Codex keeps one rollout JSONL per session under ~/.codex/sessions/YYYY/MM/DD.
+# There is no live registry like Claude Code's ~/.claude/sessions, so liveness
+# comes from the file's own mtime: Codex appends on every event, so a file
+# touched seconds ago belongs to a session that is working.
+
+CODEX_SESSIONS = os.path.expanduser("~/.codex/sessions")
+CODEX_BUSY_SECONDS = 90
+_codex_meta = {}   # path -> (session_id, cwd, model)
+
+
+def _codex_head(path):
+    """session_meta is always the first record; cache it, it never changes."""
+    if path in _codex_meta:
+        return _codex_meta[path]
+    sid = cwd = model = ""
+    try:
+        with open(path, "rb") as f:
+            first = f.readline()
+        j = json.loads(first)
+        if j.get("type") == "session_meta":
+            pl = j.get("payload") or {}
+            sid = pl.get("session_id") or pl.get("id") or ""
+            cwd = pl.get("cwd") or ""
+            model = pl.get("model") or pl.get("model_provider") or ""
+    except Exception:
+        pass
+    _codex_meta[path] = (sid, cwd, model)
+    return _codex_meta[path]
+
+
+def _codex_tail(path):
+    """Model and cumulative tokens from the end of the file."""
+    model, total = "", 0
+    try:
+        with open(path, "rb") as f:
+            size = os.fstat(f.fileno()).st_size
+            f.seek(max(0, size - 262144))
+            for line in f:
+                # No closing quote on the second needle: the record type is
+                # "token_usage_record", so '"token_usage"' never matched it.
+                if b'turn_context' in line or b'token_usage' in line:
+                    try:
+                        j = json.loads(line)
+                    except Exception:
+                        continue
+                    pl = j.get("payload") or {}
+                    if j.get("type") == "turn_context":
+                        model = pl.get("model") or model
+                    elif j.get("type") == "token_usage_record":
+                        # thread_token_usage is the running total for the whole
+                        # session; `usage` is just this response.
+                        for key in ("thread_token_usage", "total_token_usage", "usage"):
+                            u = pl.get(key)
+                            if isinstance(u, dict) and isinstance(u.get("total_tokens"), int):
+                                total = max(total, u["total_tokens"])
+                                break
+    except Exception:
+        pass
+    return model, total
+
+
+def codex_snapshot():
+    out = []
+    if not os.path.isdir(CODEX_SESSIONS):
+        return out
+    now = time.time()
+    paths = glob.glob(os.path.join(CODEX_SESSIONS, "*", "*", "*", "rollout-*.jsonl"))
+    for path in paths:
+        try:
+            mtime = os.path.getmtime(path)
+        except Exception:
+            continue
+        if now - mtime > 24 * 3600:
+            continue
+        sid, cwd, meta_model = _codex_head(path)
+        if not sid:
+            continue
+        model, tokens = _codex_tail(path)
+        project = os.path.basename((cwd or "").rstrip("/")) or "codex"
+        out.append({
+            "sessionId": sid,
+            "name": project,
+            "cwd": cwd,
+            # The HUD's own vocabulary: busy means the reporter should treat it
+            # as running, anything else falls out of the active set.
+            "status": "busy" if now - mtime <= CODEX_BUSY_SECONDS else "idle",
+            "updatedAt": int(mtime * 1000),
+            "app": "codex",
+            "model": model or meta_model,
+            "total_tokens": tokens,
+        })
+    return out
+
+
 # --- account-usage estimation (ccusage-style) ---------------------------------
 # Incrementally tails every transcript, bucketing costly tokens (input +
 # cache-creation + output; cache reads excluded) per hour. Reported as rolling
@@ -568,7 +663,8 @@ def limits():
 
 
 def payload():
-    body = {"host": HOST, "sessions": snapshot(), "usage": usage_windows()}
+    body = {"host": HOST, "sessions": snapshot() + codex_snapshot(),
+            "usage": usage_windows()}
     lim = limits()
     if lim:
         body["limits"] = lim
