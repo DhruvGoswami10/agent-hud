@@ -94,6 +94,7 @@ struct NotchRootView: View {
         .animation(state.hudState.isCollapsed ? state.animStyle.collapseAnimation : state.animStyle.animation, value: sz)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
         .contentShape(Rectangle())
+        .gesture(edgeDrag)
         .onTapGesture {
             switch state.hudState {
             case .peek:
@@ -154,6 +155,23 @@ struct NotchShape: InsettableShape {
 
 /// One shape type for the root view, whichever way the HUD hangs: the
 /// notch-style rounded rectangle from the top, or the edge notch from a side.
+extension NotchRootView {
+    /// Grab the side notch and slide it up or down the edge; it stays where
+    /// it's left. The canvas follows the pointer, so the notch is always under
+    /// the finger, and a plain click still opens the panel.
+    var edgeDrag: some Gesture {
+        DragGesture(minimumDistance: 6, coordinateSpace: .global)
+            .onChanged { _ in
+                guard metrics.edge != nil, state.hudState.isCollapsed,
+                      let screen = NotchWindowController.targetScreen() else { return }
+                state.edgeDragging = true
+                let mouse = NSEvent.mouseLocation
+                state.edgeAnchor = Double((screen.frame.maxY - mouse.y) / screen.frame.height)
+            }
+            .onEnded { _ in state.edgeDragging = false }
+    }
+}
+
 struct HUDShape: InsettableShape {
     var edge: EdgeSide? = nil
     var topRadius: CGFloat = 0

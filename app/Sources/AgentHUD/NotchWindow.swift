@@ -91,6 +91,8 @@ final class NotchWindowController {
         // display in does.
         state.$edgeSide.dropFirst().sink { [weak self] _ in self?.screensChanged() }.store(in: &subscriptions)
         state.$edgePlacement.dropFirst().sink { [weak self] _ in self?.screensChanged() }.store(in: &subscriptions)
+        // Moving the notch only moves the canvas; the view inside is untouched.
+        state.$edgeAnchor.dropFirst().sink { [weak self] _ in self?.fixFrame() }.store(in: &subscriptions)
         fixFrame()
         panel.orderFrontRegardless()
         startMouseTracking()
@@ -113,7 +115,8 @@ final class NotchWindowController {
     private func fixFrame() {
         guard let screen = Self.targetScreen() else { return }
         let canvas = NSSize(width: Self.canvasWidth, height: Self.canvasHeight)
-        panel.setFrame(Self.anchorRect(for: canvas, screen: screen.frame, metrics: metrics), display: true)
+        panel.setFrame(Self.anchorRect(for: canvas, screen: screen.frame, metrics: metrics,
+                                       anchor: state.edgeAnchor), display: true)
     }
 
     private func startMouseTracking() {
@@ -137,10 +140,11 @@ final class NotchWindowController {
     /// or pressed against a side edge at the anchor height. The same rule
     /// places the canvas, so the SwiftUI alignment inside it lines up.
     nonisolated static func anchorRect(for size: NSSize, screen frame: NSRect, metrics m: Metrics,
+                                       anchor: Double = Double(EdgeGeometry.anchorFraction),
                                        dropY: CGFloat = Playground.dropY,
                                        offsetX: CGFloat = Playground.offsetX) -> NSRect {
         if let edge = m.edge {
-            let centerY = frame.maxY - frame.height * EdgeGeometry.anchorFraction - dropY
+            let centerY = frame.maxY - frame.height * CGFloat(anchor) - dropY
             let x = edge == .right ? frame.maxX - size.width : frame.minX
             return NSRect(x: x, y: centerY - size.height / 2, width: size.width, height: size.height)
         }
@@ -149,11 +153,15 @@ final class NotchWindowController {
                       width: size.width, height: size.height)
     }
 
-    private static func hoverRect(_ sz: NSSize, on screen: NSScreen, metrics: Metrics, margin: CGFloat) -> NSRect {
-        anchorRect(for: sz, screen: screen.frame, metrics: metrics).insetBy(dx: -margin, dy: -margin)
+    private func hoverRect(_ sz: NSSize, on screen: NSScreen, margin: CGFloat) -> NSRect {
+        Self.anchorRect(for: sz, screen: screen.frame, metrics: metrics, anchor: state.edgeAnchor)
+            .insetBy(dx: -margin, dy: -margin)
     }
 
     fileprivate func pollMouse() {
+        // Mid-drag the notch is wherever the pointer is; leave the mouse
+        // routing as it was (accepting) and don't let the gate open anything.
+        if state.edgeDragging { return }
         guard let screen = Self.targetScreen() else { return }
         let sz = Self.contentSize(for: state.hudState, metrics: metrics,
                                   aggregate: state.aggregate, sideBars: state.sideBars,
@@ -163,14 +171,14 @@ final class NotchWindowController {
         let mouse = NSEvent.mouseLocation
         // Clicks pass through anywhere outside the black shape itself, so the
         // looser hover boundary never steals a click from the window beneath.
-        let contentRect = Self.hoverRect(sz, on: screen, metrics: metrics, margin: Self.enterMargin)
+        let contentRect = hoverRect(sz, on: screen, margin: Self.enterMargin)
         let overContent = contentRect.contains(mouse)
         if overContent == ignoringMouse {
             ignoringMouse = !overContent
             panel.ignoresMouseEvents = !overContent
         }
         let margin = hoverGate.engaged ? Self.exitMargin : Self.enterMargin
-        let inside = Self.hoverRect(sz, on: screen, metrics: metrics, margin: margin).contains(mouse)
+        let inside = hoverRect(sz, on: screen, margin: margin).contains(mouse)
         if let engaged = hoverGate.update(point: mouse, inside: inside) {
             state.hoverChanged(engaged)
         }
@@ -227,7 +235,7 @@ final class NotchWindowController {
     /// The notched screen when there is one, else the primary display.
     /// Deliberately not `NSScreen.main`: that follows keyboard focus, so on a
     /// multi-display setup the HUD would hop screens as you click around.
-    private static func targetScreen() -> NSScreen? {
+    static func targetScreen() -> NSScreen? {
         NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 })
             ?? NSScreen.screens.first
             ?? NSScreen.main

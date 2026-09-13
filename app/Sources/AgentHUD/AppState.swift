@@ -57,6 +57,20 @@ final class AppState: ObservableObject {
     @Published var edgeSide: EdgeSide { didSet { UserDefaults.standard.set(edgeSide.rawValue, forKey: "edgeSide") } }
     @Published var edgeGripBar: Bool { didSet { UserDefaults.standard.set(edgeGripBar, forKey: "edgeGripBar") } }
     @Published var edgePlacement: Bool { didSet { UserDefaults.standard.set(edgePlacement, forKey: "edgePlacement") } }
+    /// How far down the edge the side notch sits, as a fraction of the screen
+    /// height from the top. Clamped so the open panel always fits on screen
+    /// below the menu bar. Set by dragging the notch, or the slider.
+    @Published var edgeAnchor: Double {
+        didSet {
+            let clamped = min(Self.edgeAnchorRange.upperBound, max(Self.edgeAnchorRange.lowerBound, edgeAnchor))
+            if clamped != edgeAnchor { edgeAnchor = clamped; return }
+            UserDefaults.standard.set(edgeAnchor, forKey: "edgeAnchor")
+        }
+    }
+    nonisolated static let edgeAnchorRange: ClosedRange<Double> = 0.22...0.80
+    /// True while the side notch is being dragged: hover must not open the
+    /// panel halfway through a move.
+    var edgeDragging = false
     @Published var alwaysShowIndicator: Bool {
         didSet {
             UserDefaults.standard.set(alwaysShowIndicator, forKey: "alwaysShowIndicator")
@@ -378,6 +392,8 @@ final class AppState: ObservableObject {
         edgeSide = EdgeSide(rawValue: d.string(forKey: "edgeSide") ?? "") ?? .right
         edgeGripBar = d.object(forKey: "edgeGripBar") as? Bool ?? false
         edgePlacement = d.object(forKey: "edgePlacement") as? Bool ?? true
+        let anchor = d.object(forKey: "edgeAnchor") as? Double ?? Double(EdgeGeometry.anchorFraction)
+        edgeAnchor = min(Self.edgeAnchorRange.upperBound, max(Self.edgeAnchorRange.lowerBound, anchor))
         dismissHotKeyEnabled = d.object(forKey: "dismissHotKeyEnabled") as? Bool ?? true
         clickPeekDismisses = d.object(forKey: "clickPeekDismisses") as? Bool ?? true
         hoverExpandsPeek = d.object(forKey: "hoverExpandsPeek") as? Bool ?? false

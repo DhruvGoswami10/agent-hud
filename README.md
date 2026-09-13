@@ -80,6 +80,8 @@ tabs, so nothing lives there.
 - Peeks slide inward from the edge; the full panel opens as a drawer at
   mid-height — never near the tab strip.
 - Hover or click the edge at mid-height to open, exactly like the notch.
+- Drag the side notch up or down the edge to put it where you want it; it
+  stays there (there's a slider in Settings too).
 - Settings → *Without a notch*: right or left edge, notch or bar grip (the bar
   is the side-indicator bars moved to the edge, one segment per running
   session), or opt back into the old top-centre pill.

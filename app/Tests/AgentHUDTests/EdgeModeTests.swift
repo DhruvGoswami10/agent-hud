@@ -125,6 +125,19 @@ final class AnchorRectTests: XCTestCase {
         XCTAssertLessThan(r.maxY, 1440 - 68 - 200, "tab strip is the top 68 pt; keep well away")
     }
 
+    /// Drag it up or down and it goes exactly there — the same rule moves
+    /// the canvas and the hover target, so it stays under the pointer.
+    func testAnchorFollowsThePreference() {
+        let m = NotchWindowController.Metrics(notchWidth: 0, notchHeight: 0, hasNotch: false, edge: .right)
+        let high = NotchWindowController.anchorRect(for: NSSize(width: 18, height: 112), screen: screen,
+                                                    metrics: m, anchor: 0.25, dropY: 0, offsetX: 0)
+        let low = NotchWindowController.anchorRect(for: NSSize(width: 18, height: 112), screen: screen,
+                                                   metrics: m, anchor: 0.75, dropY: 0, offsetX: 0)
+        XCTAssertEqual(high.midY, 1440 * 0.75, accuracy: 0.5)
+        XCTAssertEqual(low.midY, 1440 * 0.25, accuracy: 0.5)
+        XCTAssertGreaterThan(high.midY, low.midY, "smaller fraction = higher on screen")
+    }
+
     func testNotchPlacementIsUnchanged() {
         let m = NotchWindowController.Metrics(notchWidth: 200, notchHeight: 32, hasNotch: true)
         let r = NotchWindowController.anchorRect(for: NSSize(width: 200, height: 32), screen: screen,
@@ -180,6 +193,19 @@ final class EdgePreferenceTests: XCTestCase {
         XCTAssertEqual(s.edgeSide, .right)
         XCTAssertFalse(s.edgeGripBar)
         XCTAssertTrue(s.edgePlacement)
+    }
+
+    /// The anchor is clamped so the open panel always fits below the menu
+    /// bar and above the bottom, wherever the drag ends.
+    func testAnchorIsClampedAndPersisted() {
+        let s = AppState()
+        s.edgeAnchor = 0.02
+        XCTAssertEqual(s.edgeAnchor, AppState.edgeAnchorRange.lowerBound)
+        s.edgeAnchor = 0.99
+        XCTAssertEqual(s.edgeAnchor, AppState.edgeAnchorRange.upperBound)
+        s.edgeAnchor = 0.6
+        XCTAssertEqual(UserDefaults.standard.double(forKey: "edgeAnchor"), 0.6, accuracy: 0.0001)
+        s.edgeAnchor = Double(EdgeGeometry.anchorFraction)
     }
 
     func testPreferencesPersist() {

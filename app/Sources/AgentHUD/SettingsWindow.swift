@@ -138,6 +138,15 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 Text("Bar is the side-indicator bars moved to the edge — one segment per running session.")
                     .font(.caption).foregroundStyle(.secondary)
+                Slider(value: $state.edgeAnchor, in: AppState.edgeAnchorRange) {
+                    Text("Height")
+                } minimumValueLabel: {
+                    Text("Higher").font(.caption)
+                } maximumValueLabel: {
+                    Text("Lower").font(.caption)
+                }
+                Text("Or just drag the side notch up and down. It stays where you leave it.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Alerts") {
                 if state.notificationsBlocked {
