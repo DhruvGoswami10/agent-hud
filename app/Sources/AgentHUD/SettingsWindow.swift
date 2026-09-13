@@ -122,6 +122,23 @@ struct SettingsView: View {
                 Text("Off: a thin glowing line under the notch instead of bars flanking it.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Without a notch (lid closed, external display)") {
+                Toggle("Side notch instead of a top pill", isOn: $state.edgePlacement)
+                Text("On a wide display the top-centre is where the browser keeps its tabs, so the HUD moves to a side edge: the notch turned on its side. A sliver at rest, a lit silhouette when there is news.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Picker("Edge", selection: $state.edgeSide) {
+                    Text("Right").tag(EdgeSide.right)
+                    Text("Left").tag(EdgeSide.left)
+                }
+                .pickerStyle(.segmented)
+                Picker("Grip", selection: $state.edgeGripBar) {
+                    Text("Notch").tag(false)
+                    Text("Bar").tag(true)
+                }
+                .pickerStyle(.segmented)
+                Text("Bar is the side-indicator bars moved to the edge — one segment per running session.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Alerts") {
                 if state.notificationsBlocked {
                     // The sound and the banner are separate channels, so a

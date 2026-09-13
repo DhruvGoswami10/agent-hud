@@ -9,42 +9,90 @@ struct NotchRootView: View {
     private var topRadius: CGFloat { metrics.hasNotch ? 0 : 10 }
     private var bottomRadius: CGFloat { state.hudState.isCollapsed ? 8 : 24 }
 
+    /// Where the shape sits in the canvas: hung from the top, or pressed
+    /// against whichever side the edge notch lives on.
+    private var alignment: Alignment {
+        switch metrics.edge {
+        case .right: return .trailing
+        case .left: return .leading
+        case nil: return .top
+        }
+    }
+
+    /// Idle on a plain edge with the resting indicator off: the shape keeps
+    /// its hover target but draws nothing at all.
+    private var hiddenIdle: Bool {
+        metrics.edge != nil && state.hudState.isCollapsed
+            && state.aggregate == .info && !state.alwaysShowIndicator
+    }
+
+    private func shape(for sz: NSSize) -> HUDShape {
+        guard let side = metrics.edge else {
+            return HUDShape(topRadius: topRadius, bottomRadius: bottomRadius)
+        }
+        let collapsed = state.hudState.isCollapsed
+        if collapsed && state.edgeGripBar {
+            return HUDShape(edge: side, chamfer: 0, radius: sz.width)   // half-capsule on the edge
+        }
+        // The side notch: the chamfers scale with its depth, so a resting
+        // sliver stays a sliver and the full silhouette earns its corners.
+        return HUDShape(edge: side, chamfer: collapsed ? sz.width * 0.72 : 0,
+                        radius: collapsed ? 4 : 22)
+    }
+
+    /// The bar grip is the state colour itself; everything else is black glass.
+    private var fill: Color {
+        guard metrics.edge != nil, state.hudState.isCollapsed, state.edgeGripBar else { return .black }
+        return state.aggregate == .info ? Color(white: 0.6) : state.aggregate.color
+    }
+
+    private var edgeInset: EdgeInsets {
+        EdgeInsets(top: 0, leading: metrics.edge == .left ? 8 : 0,
+                   bottom: 0, trailing: metrics.edge == .right ? 8 : 0)
+    }
+
     var body: some View {
         let sz = NotchWindowController.contentSize(for: state.hudState, metrics: metrics,
                                                    aggregate: state.aggregate, sideBars: state.sideBars,
                                                    peekPreview: state.peekPreviewSize,
-                                                   idleIndicator: state.alwaysShowIndicator)
+                                                   idleIndicator: state.alwaysShowIndicator,
+                                                   edgeBar: state.edgeGripBar)
+        let shape = shape(for: sz)
         ZStack(alignment: .top) {
-            NotchShape(topRadius: topRadius, bottomRadius: bottomRadius)
-                .fill(.black)
-                .overlay(
-                    NotchShape(topRadius: topRadius, bottomRadius: bottomRadius)
-                        .strokeBorder(.white.opacity(0.09), lineWidth: 1)
-                )
+            shape
+                .fill(fill)
+                .overlay(shape.strokeBorder(.white.opacity(0.09), lineWidth: 1))
                 .shadow(color: .black.opacity(state.hudState.isCollapsed ? 0 : 0.5), radius: 16, y: 6)
+                .opacity(hiddenIdle ? 0 : 1)
             Group {
                 switch state.hudState {
                 case .collapsed:
-                    CollapsedStrip(state: state, metrics: metrics)
+                    if let side = metrics.edge {
+                        EdgeCollapsed(state: state, side: side, size: sz)
+                    } else {
+                        CollapsedStrip(state: state, metrics: metrics)
+                    }
                 case .peek(let content):
                     PeekView(content: content, art: state.nowPlayingArt,
                              artColor: state.nowPlayingArtColor.map(Color.init(nsColor:)))
                         .padding(.top, metrics.notchHeight)
+                        .padding(edgeInset)
                         .opacity(showContent ? 1 : 0)
                 case .open:
                     OpenPanel(state: state)
                         .padding(.top, metrics.hasNotch ? metrics.notchHeight : 12)
+                        .padding(edgeInset)
                         .opacity(showContent ? 1 : 0)
                 }
             }
             // Fill the whole shape before clipping — otherwise the clip hugs
             // the content's own bounds and glows render as a second card.
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .clipShape(NotchShape(topRadius: topRadius, bottomRadius: bottomRadius))
+            .clipShape(shape)
         }
         .frame(width: sz.width, height: sz.height, alignment: .top)
         .animation(state.hudState.isCollapsed ? state.animStyle.collapseAnimation : state.animStyle.animation, value: sz)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
         .contentShape(Rectangle())
         .onTapGesture {
             switch state.hudState {
@@ -104,7 +152,177 @@ struct NotchShape: InsettableShape {
     }
 }
 
+/// One shape type for the root view, whichever way the HUD hangs: the
+/// notch-style rounded rectangle from the top, or the edge notch from a side.
+struct HUDShape: InsettableShape {
+    var edge: EdgeSide? = nil
+    var topRadius: CGFloat = 0
+    var bottomRadius: CGFloat = 0
+    var chamfer: CGFloat = 0
+    var radius: CGFloat = 0
+    var insetAmount: CGFloat = 0
+
+    init(topRadius: CGFloat, bottomRadius: CGFloat) {
+        self.topRadius = topRadius
+        self.bottomRadius = bottomRadius
+    }
+
+    init(edge: EdgeSide, chamfer: CGFloat, radius: CGFloat) {
+        self.edge = edge
+        self.chamfer = chamfer
+        self.radius = radius
+    }
+
+    func inset(by amount: CGFloat) -> HUDShape {
+        var s = self
+        s.insetAmount += amount
+        return s
+    }
+
+    func path(in rect: CGRect) -> Path {
+        if let edge {
+            return EdgeShape(side: edge, chamfer: chamfer, radius: radius, insetAmount: insetAmount).path(in: rect)
+        }
+        return NotchShape(topRadius: topRadius, bottomRadius: bottomRadius, insetAmount: insetAmount).path(in: rect)
+    }
+}
+
+/// The notch turned on its side, for screens that have none: flat against
+/// the screen edge, chamfering in to a straight face and back out, corners
+/// softened like the real one. With `chamfer` 0 it is the edge-attached card
+/// the peek and the open panel use — square on the edge, rounded inside.
+struct EdgeShape: InsettableShape {
+    var side: EdgeSide
+    var chamfer: CGFloat
+    var radius: CGFloat
+    var insetAmount: CGFloat = 0
+
+    func inset(by amount: CGFloat) -> EdgeShape {
+        var s = self
+        s.insetAmount += amount
+        return s
+    }
+
+    func path(in rect: CGRect) -> Path {
+        Self.outline(in: rect.insetBy(dx: insetAmount, dy: insetAmount),
+                     side: side, chamfer: chamfer, radius: radius, closed: true)
+    }
+
+    /// The silhouette. `closed` false leaves the screen-edge side undrawn —
+    /// for strokes, since a line along the screen edge is just a line.
+    static func outline(in r: CGRect, side: EdgeSide, chamfer: CGFloat, radius: CGFloat,
+                        closed: Bool) -> Path {
+        let w = max(0, r.width), h = max(0, r.height)
+        let c = max(0, min(chamfer, h / 2))
+        // The corner arcs must fit the face between the chamfers, the depth,
+        // and half a chamfer leg; the angle at a chamfer is obtuse, so the
+        // tangent runs never exceed the radius itself.
+        let rr = max(0.01, min(radius, (h - 2 * c) / 2, w, hypot(w, c) / 2))
+        // Built for the right edge (edge at x = w, face at x = 0), mirrored after.
+        var p = Path()
+        p.move(to: CGPoint(x: w, y: 0))
+        p.addArc(tangent1End: CGPoint(x: 0, y: c), tangent2End: CGPoint(x: 0, y: h - c), radius: rr)
+        p.addArc(tangent1End: CGPoint(x: 0, y: h - c), tangent2End: CGPoint(x: w, y: h), radius: rr)
+        p.addLine(to: CGPoint(x: w, y: h))
+        if closed { p.closeSubpath() }
+        var t = CGAffineTransform(translationX: r.minX, y: r.minY)
+        if side == .left {
+            t = CGAffineTransform(translationX: r.minX + w, y: r.minY).scaledBy(x: -1, y: 1)
+        }
+        return p.applying(t)
+    }
+}
+
+/// The open outline of the edge notch, for its glow and highlight strokes.
+struct EdgeOutline: Shape {
+    var side: EdgeSide
+    var chamfer: CGFloat
+    var radius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        EdgeShape.outline(in: rect, side: side, chamfer: chamfer, radius: radius, closed: false)
+    }
+}
+
 // MARK: - Collapsed
+
+/// The side notch at rest and at work. The black body (or, for the bar grip,
+/// the coloured capsule) is drawn by the root; this adds the state: a glow
+/// along the silhouette with a specular catch on the upper chamfer, or the
+/// gaps that split the bar into one segment per running session.
+private struct EdgeCollapsed: View {
+    @ObservedObject var state: AppState
+    let side: EdgeSide
+    let size: NSSize
+
+    var body: some View {
+        if state.aggregate != .info || state.alwaysShowIndicator {
+            EdgeGripMarks(side: side, bar: state.edgeGripBar,
+                          tint: state.aggregate == .info ? Color(white: 0.78) : state.aggregate.color,
+                          chamfer: size.width * 0.72,
+                          breathing: state.aggregate == .running,
+                          resting: state.aggregate == .info,
+                          segments: max(1, state.runningCount))
+        }
+    }
+}
+
+/// Plain values in, nothing observed — the same discipline as IndicatorMarks,
+/// for the same reason: a breathing animation must not invalidate the root.
+private struct EdgeGripMarks: View {
+    let side: EdgeSide
+    let bar: Bool
+    let tint: Color
+    let chamfer: CGFloat
+    let breathing: Bool
+    let resting: Bool
+    let segments: Int
+
+    @State private var pulse = false
+
+    var body: some View {
+        Group {
+            if bar {
+                // Dark gaps over the coloured capsule, one per extra session.
+                VStack(spacing: 0) {
+                    ForEach(0..<segments, id: \.self) { i in
+                        Color.clear
+                        if i < segments - 1 { Color.black.frame(height: 4) }
+                    }
+                }
+                .padding(.vertical, 6)
+            } else {
+                ZStack {
+                    EdgeOutline(side: side, chamfer: chamfer, radius: 4)
+                        .stroke(tint, style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
+                        .shadow(color: tint.opacity(0.9), radius: 4)
+                        .shadow(color: tint.opacity(0.6), radius: 9)
+                        .opacity(resting ? 0 : 1)
+                    EdgeOutline(side: side, chamfer: chamfer, radius: 4)
+                        .stroke(LinearGradient(colors: [.white.opacity(0.55), .white.opacity(0.06), .clear],
+                                               startPoint: .top, endPoint: .bottom),
+                                style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
+                }
+                .padding(0.7)
+            }
+        }
+        .opacity(resting ? 0.5 : (breathing && pulse ? 0.45 : 1))
+        // Only breathe while something is running: a repeatForever animation
+        // keeps SwiftUI's display link alive for as long as it exists.
+        .onAppear { sync() }
+        .onChange(of: breathing) { _, _ in sync() }
+        .onDisappear { pulse = false }
+    }
+
+    private func sync() {
+        if breathing {
+            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) { pulse = true }
+        } else {
+            withAnimation(.linear(duration: 0.12)) { pulse = false }
+        }
+    }
+}
+
 
 /// Collapsed status: either two thin vertical bars hugging the notch's left
 /// and right edges (bottom stays perfectly flush), or a thin glow line under

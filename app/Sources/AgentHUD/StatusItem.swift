@@ -11,6 +11,7 @@ final class StatusItemController: NSObject {
     private var soundItem: NSMenuItem!
     private var copyItem: NSMenuItem!
     private var sideBarsItem: NSMenuItem!
+    private var edgeLeftItem: NSMenuItem!
     private var musicItem: NSMenuItem!
     private var muteItem: NSMenuItem!
     private var awakeItem: NSMenuItem!
@@ -36,6 +37,7 @@ final class StatusItemController: NSObject {
         soundItem = makeItem("Sounds", #selector(toggleSounds), "")
         copyItem = makeItem("Expand on Copy", #selector(toggleCopy), "")
         sideBarsItem = makeItem("Side Indicator Bars", #selector(toggleSideBars), "")
+        edgeLeftItem = makeItem("Side Notch on Left Edge", #selector(toggleEdgeSide), "")
         musicItem = makeItem("Music Controls", #selector(toggleMusic), "")
         muteItem = makeItem("Mute Notifications", #selector(toggleMute), "m")
         awakeItem = makeItem("Keep Mac Awake", #selector(toggleAwake), "")
@@ -44,6 +46,7 @@ final class StatusItemController: NSObject {
         menu.addItem(soundItem)
         menu.addItem(copyItem)
         menu.addItem(sideBarsItem)
+        menu.addItem(edgeLeftItem)
         menu.addItem(musicItem)
         menu.addItem(.separator())
         menu.addItem(muteItem)
@@ -124,6 +127,7 @@ final class StatusItemController: NSObject {
         soundItem?.state = state.sounds ? .on : .off
         copyItem?.state = state.expandOnCopy ? .on : .off
         sideBarsItem?.state = state.sideBars ? .on : .off
+        edgeLeftItem?.state = state.edgeSide == .left ? .on : .off
         musicItem?.state = state.musicEnabled ? .on : .off
         muteItem?.state = state.muted ? .on : .off
         awakeItem?.state = state.keepAwake ? .on : .off
@@ -178,6 +182,7 @@ final class StatusItemController: NSObject {
     @objc private func toggleSounds() { state.sounds.toggle() }
     @objc private func toggleCopy() { state.expandOnCopy.toggle() }
     @objc private func toggleSideBars() { state.sideBars.toggle() }
+    @objc private func toggleEdgeSide() { state.edgeSide = state.edgeSide == .left ? .right : .left }
     @objc private func toggleMusic() { state.musicEnabled.toggle() }
     @objc private func toggleMute() { state.muted.toggle() }
     @objc private func toggleAwake() { state.keepAwake.toggle() }

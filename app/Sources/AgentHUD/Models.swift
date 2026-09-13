@@ -44,6 +44,18 @@ enum Playground {
     /// the floating panel, so having both up shows you the same panel twice —
     /// which is confusing rather than useful. `make preview` asks for it.
     static var lid: Bool { ProcessInfo.processInfo.environment["AGENT_HUD_PREVIEW"] == "1" }
+
+    /// Force the side-notch placement on a screen that has a notch, so edge
+    /// mode can be tried on the MacBook's own display: "1", "right" or "left".
+    static var forceEdge: String? {
+        let v = ProcessInfo.processInfo.environment["AGENT_HUD_EDGE"] ?? ""
+        return v.isEmpty || v == "0" ? nil : v
+    }
+}
+
+/// Which screen edge the HUD hangs from when there is no notch to live in.
+enum EdgeSide: String, CaseIterable {
+    case left, right
 }
 
 enum HostAliases {

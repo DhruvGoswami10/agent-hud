@@ -33,6 +33,18 @@ playground: bundle
 	AGENT_HUD_PLAYGROUND=1 open -n $(PLAY)
 	@echo "playground on :48086, floating clear of the notch — the live HUD is untouched"
 
+# The side notch on the MacBook's own (notched) screen: the sandbox forced
+# into edge mode, so clamshell behaviour can be tried with the lid open.
+playground-edge: bundle
+	rm -rf $(PLAY)
+	cp -R $(APP) $(PLAY)
+	/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier dev.dhruv.agenthud.playground" $(PLAY)/Contents/Info.plist
+	/usr/libexec/PlistBuddy -c "Set :CFBundleName AgentHUD Playground" $(PLAY)/Contents/Info.plist
+	codesign --force --sign - $(PLAY)
+	-pkill -f "AgentHUD-Playground" 2>/dev/null || true
+	AGENT_HUD_PLAYGROUND=1 AGENT_HUD_EDGE=$${EDGE:-right} open -n $(PLAY)
+	@echo "playground in edge mode on the $${EDGE:-right} edge (EDGE=left to flip)"
+
 # Same sandbox, but framed in a drawn MacBook window instead of floating.
 # One or the other: both at once renders the same panel twice.
 preview: playground

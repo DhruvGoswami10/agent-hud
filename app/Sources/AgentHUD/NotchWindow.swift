@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 final class NotchPanel: NSPanel {
@@ -22,20 +23,49 @@ final class NotchPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-/// The panel window is a fixed, invisible canvas pinned under the notch; the
-/// black shape animates freely inside it with SwiftUI springs. Mouse tracking
-/// flips `ignoresMouseEvents` so the transparent canvas never intercepts
-/// clicks meant for windows underneath.
+/// Where the HUD lives. The notch when a screen has one; otherwise a side
+/// edge — the notch turned on its side — because on a wide external display
+/// the top-centre is exactly where every browser keeps its tabs.
+enum Placement: Equatable {
+    case notch
+    /// The old fallback: a pill hung from the top-centre. Kept as an opt-out.
+    case topPill
+    case edge(EdgeSide)
+}
+
+/// The side notch's resting and active sizes, in points. At rest it is a
+/// sliver in the scrollbar gutter; it only grows when there is news.
+enum EdgeGeometry {
+    static let hidden = NSSize(width: 3, height: 96)      // idle, indicator off: hoverable, invisible
+    static let resting = NSSize(width: 5, height: 80)     // idle, indicator on
+    static let active = NSSize(width: 14, height: 104)    // running / done / music / copied
+    static let attention = NSSize(width: 18, height: 112) // needs you
+    /// The bar grip: the side-bars identity moved to the edge.
+    static let barHidden = NSSize(width: 3, height: 60)
+    static let barResting = NSSize(width: 4, height: 64)
+    static let barActive = NSSize(width: 7, height: 76)
+    static let barAttention = NSSize(width: 8, height: 84)
+    /// Vertical anchor, as a fraction of the screen height from the top:
+    /// well clear of tab strips and toolbars, above the dock.
+    static let anchorFraction: CGFloat = 0.42
+}
+
+/// The panel window is a fixed, invisible canvas pinned under the notch (or
+/// against a side edge); the black shape animates freely inside it with
+/// SwiftUI springs. Mouse tracking flips `ignoresMouseEvents` so the
+/// transparent canvas never intercepts clicks meant for windows underneath.
 @MainActor
 final class NotchWindowController {
     struct Metrics: Equatable {
         let notchWidth: CGFloat
         let notchHeight: CGFloat
         let hasNotch: Bool
+        /// Set when the HUD hangs from a side edge instead of the top.
+        var edge: EdgeSide? = nil
     }
 
-    static let canvasWidth: CGFloat = 800
-    static let canvasHeight: CGFloat = 600
+    nonisolated static let canvasWidth: CGFloat = 800
+    nonisolated static let canvasHeight: CGFloat = 600
 
     private let panel = NotchPanel()
     private let state: AppState
@@ -43,10 +73,11 @@ final class NotchWindowController {
     private var mouseTimer: Timer?
     private var hoverGate = HoverGate()
     private var ignoringMouse = true
+    private var subscriptions: [AnyCancellable] = []
 
     init(state: AppState) {
         self.state = state
-        self.metrics = Self.computeMetrics(for: Self.targetScreen())
+        self.metrics = Self.computeMetrics(for: Self.targetScreen(), placement: Self.placement(for: state))
         let hosting = NSHostingView(rootView: NotchRootView(state: state, metrics: metrics))
         hosting.autoresizingMask = [.width, .height]
         panel.contentView = hosting
@@ -56,13 +87,17 @@ final class NotchWindowController {
                                                object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.screensChanged() }
         }
+        // Edge preferences change the placement the same way plugging a
+        // display in does.
+        state.$edgeSide.dropFirst().sink { [weak self] _ in self?.screensChanged() }.store(in: &subscriptions)
+        state.$edgePlacement.dropFirst().sink { [weak self] _ in self?.screensChanged() }.store(in: &subscriptions)
         fixFrame()
         panel.orderFrontRegardless()
         startMouseTracking()
     }
 
     private func screensChanged() {
-        let fresh = Self.computeMetrics(for: Self.targetScreen())
+        let fresh = Self.computeMetrics(for: Self.targetScreen(), placement: Self.placement(for: state))
         // Rebuilding the root view resets its @State, which blanks the panel's
         // content while it's open. Display sleep/wake and most resolution
         // changes leave the notch geometry identical, so don't pay for it.
@@ -77,11 +112,8 @@ final class NotchWindowController {
 
     private func fixFrame() {
         guard let screen = Self.targetScreen() else { return }
-        let w = Self.canvasWidth
-        let h = Self.canvasHeight
-        panel.setFrame(NSRect(x: screen.frame.midX - w / 2 + Playground.offsetX,
-                              y: screen.frame.maxY - h - Playground.dropY, width: w, height: h),
-                       display: true)
+        let canvas = NSSize(width: Self.canvasWidth, height: Self.canvasHeight)
+        panel.setFrame(Self.anchorRect(for: canvas, screen: screen.frame, metrics: metrics), display: true)
     }
 
     private func startMouseTracking() {
@@ -98,14 +130,27 @@ final class NotchWindowController {
     /// open the pointer wanders to its edges (the header buttons, the
     /// clipboard chips, the burn strip along the bottom), and a 4pt boundary
     /// snapped it shut mid-read.
-    static let enterMargin: CGFloat = 4
-    static let exitMargin: CGFloat = 32
+    nonisolated static let enterMargin: CGFloat = 4
+    nonisolated static let exitMargin: CGFloat = 32
 
-    private static func hoverRect(_ sz: NSSize, on screen: NSScreen, margin: CGFloat) -> NSRect {
-        NSRect(x: screen.frame.midX - sz.width / 2 - margin + Playground.offsetX,
-               y: screen.frame.maxY - sz.height - margin - Playground.dropY,
-               width: sz.width + margin * 2,
-               height: sz.height + margin * 2)
+    /// Where a shape of this size sits on screen: hung from the top-centre,
+    /// or pressed against a side edge at the anchor height. The same rule
+    /// places the canvas, so the SwiftUI alignment inside it lines up.
+    nonisolated static func anchorRect(for size: NSSize, screen frame: NSRect, metrics m: Metrics,
+                                       dropY: CGFloat = Playground.dropY,
+                                       offsetX: CGFloat = Playground.offsetX) -> NSRect {
+        if let edge = m.edge {
+            let centerY = frame.maxY - frame.height * EdgeGeometry.anchorFraction - dropY
+            let x = edge == .right ? frame.maxX - size.width : frame.minX
+            return NSRect(x: x, y: centerY - size.height / 2, width: size.width, height: size.height)
+        }
+        return NSRect(x: frame.midX - size.width / 2 + offsetX,
+                      y: frame.maxY - size.height - dropY,
+                      width: size.width, height: size.height)
+    }
+
+    private static func hoverRect(_ sz: NSSize, on screen: NSScreen, metrics: Metrics, margin: CGFloat) -> NSRect {
+        anchorRect(for: sz, screen: screen.frame, metrics: metrics).insetBy(dx: -margin, dy: -margin)
     }
 
     fileprivate func pollMouse() {
@@ -113,18 +158,19 @@ final class NotchWindowController {
         let sz = Self.contentSize(for: state.hudState, metrics: metrics,
                                   aggregate: state.aggregate, sideBars: state.sideBars,
                                   peekPreview: state.peekPreviewSize,
-                                  idleIndicator: state.alwaysShowIndicator)
+                                  idleIndicator: state.alwaysShowIndicator,
+                                  edgeBar: state.edgeGripBar)
         let mouse = NSEvent.mouseLocation
         // Clicks pass through anywhere outside the black shape itself, so the
         // looser hover boundary never steals a click from the window beneath.
-        let contentRect = Self.hoverRect(sz, on: screen, margin: Self.enterMargin)
+        let contentRect = Self.hoverRect(sz, on: screen, metrics: metrics, margin: Self.enterMargin)
         let overContent = contentRect.contains(mouse)
         if overContent == ignoringMouse {
             ignoringMouse = !overContent
             panel.ignoresMouseEvents = !overContent
         }
         let margin = hoverGate.engaged ? Self.exitMargin : Self.enterMargin
-        let inside = Self.hoverRect(sz, on: screen, margin: margin).contains(mouse)
+        let inside = Self.hoverRect(sz, on: screen, metrics: metrics, margin: margin).contains(mouse)
         if let engaged = hoverGate.update(point: mouse, inside: inside) {
             state.hoverChanged(engaged)
         }
@@ -135,7 +181,19 @@ final class NotchWindowController {
     nonisolated static func contentSize(for target: HUDState, metrics m: Metrics,
                                         aggregate: EventKind, sideBars: Bool,
                                         peekPreview: CGSize? = nil,
-                                        idleIndicator: Bool = false) -> NSSize {
+                                        idleIndicator: Bool = false,
+                                        edgeBar: Bool = false) -> NSSize {
+        if m.edge != nil, case .collapsed = target {
+            // Nothing to hide inside on a plain edge, so rest is a sliver that
+            // stays hoverable, and news is what earns the full silhouette.
+            let idle = aggregate == .info
+            if edgeBar {
+                if idle { return idleIndicator ? EdgeGeometry.barResting : EdgeGeometry.barHidden }
+                return aggregate == .attention ? EdgeGeometry.barAttention : EdgeGeometry.barActive
+            }
+            if idle { return idleIndicator ? EdgeGeometry.resting : EdgeGeometry.hidden }
+            return aggregate == .attention ? EdgeGeometry.attention : EdgeGeometry.active
+        }
         switch target {
         case .collapsed:
             guard m.hasNotch else { return NSSize(width: 210, height: 30) }
@@ -175,8 +233,30 @@ final class NotchWindowController {
             ?? NSScreen.main
     }
 
-    private static func computeMetrics(for screen: NSScreen?) -> Metrics {
-        guard let screen else { return Metrics(notchWidth: 210, notchHeight: 8, hasNotch: false) }
+    private static func placement(for state: AppState) -> Placement {
+        resolvePlacement(hasNotchedScreen: NSScreen.screens.contains { $0.safeAreaInsets.top > 0 },
+                         edgePlacement: state.edgePlacement, side: state.edgeSide,
+                         forced: Playground.forceEdge)
+    }
+
+    /// Edge mode is what "no notch anywhere" means: the lid is closed or the
+    /// only displays are external. Open the lid and the notch wins again.
+    nonisolated static func resolvePlacement(hasNotchedScreen: Bool, edgePlacement: Bool,
+                                             side: EdgeSide, forced: String?) -> Placement {
+        if let forced {
+            return .edge(EdgeSide(rawValue: forced) ?? side)
+        }
+        if hasNotchedScreen { return .notch }
+        return edgePlacement ? .edge(side) : .topPill
+    }
+
+    nonisolated static func computeMetrics(for screen: NSScreen?, placement: Placement) -> Metrics {
+        if case .edge(let side) = placement {
+            return Metrics(notchWidth: 0, notchHeight: 0, hasNotch: false, edge: side)
+        }
+        guard let screen, placement == .notch else {
+            return Metrics(notchWidth: 210, notchHeight: 8, hasNotch: false)
+        }
         let top = screen.safeAreaInsets.top
         if top > 0 {
             var width = screen.frame.width * 0.18

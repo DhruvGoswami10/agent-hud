@@ -67,6 +67,27 @@ reporting after a restart. New sessions report immediately.
 - Menu bar sparkle icon = aggregate state (orange approval / blue running /
   green recent done). Menu has toggles + "Send Test Event".
 
+## No notch? Lid closed, external display
+
+With no notch on any attached screen — a MacBook in clamshell mode, or
+external-only — the HUD moves to a **side edge**: the notch turned on its
+side. On a wide display the top-centre is exactly where the browser keeps its
+tabs, so nothing lives there.
+
+- At rest it's a 5 pt sliver in the scrollbar gutter (or nothing at all, with
+  the resting indicator off). Running news lights a 14 pt silhouette; a review
+  gets the full 18 pt. It shrinks back after.
+- Peeks slide inward from the edge; the full panel opens as a drawer at
+  mid-height — never near the tab strip.
+- Hover or click the edge at mid-height to open, exactly like the notch.
+- Settings → *Without a notch*: right or left edge, notch or bar grip (the bar
+  is the side-indicator bars moved to the edge, one segment per running
+  session), or opt back into the old top-centre pill.
+- Open the lid and the notch wins again; it follows display changes live.
+
+Try it on the MacBook's own screen with `make playground-edge` (`EDGE=left`
+to flip sides).
+
 ## Quitting and starting again
 
 `Quit Agent HUD` stops the app. Nothing breaks while it's off — the hooks still

@@ -51,6 +51,12 @@ final class AppState: ObservableObject {
     @Published var hoverCollapseDelay: Double { didSet { UserDefaults.standard.set(hoverCollapseDelay, forKey: "hoverCollapseDelay") } }
     /// Show a dim resting indicator when nothing is happening, instead of the
     /// notch going completely invisible.
+    /// Side-notch preferences, for screens without a notch (lid closed,
+    /// external-only). Which edge, which grip, and whether to use it at all
+    /// rather than the old top-centre pill.
+    @Published var edgeSide: EdgeSide { didSet { UserDefaults.standard.set(edgeSide.rawValue, forKey: "edgeSide") } }
+    @Published var edgeGripBar: Bool { didSet { UserDefaults.standard.set(edgeGripBar, forKey: "edgeGripBar") } }
+    @Published var edgePlacement: Bool { didSet { UserDefaults.standard.set(edgePlacement, forKey: "edgePlacement") } }
     @Published var alwaysShowIndicator: Bool {
         didSet {
             UserDefaults.standard.set(alwaysShowIndicator, forKey: "alwaysShowIndicator")
@@ -369,6 +375,9 @@ final class AppState: ObservableObject {
         musicPeekSeconds = d.object(forKey: "musicPeekSeconds") as? Double ?? 4
         hoverCollapseDelay = d.object(forKey: "hoverCollapseDelay") as? Double ?? 0.6
         alwaysShowIndicator = d.object(forKey: "alwaysShowIndicator") as? Bool ?? false
+        edgeSide = EdgeSide(rawValue: d.string(forKey: "edgeSide") ?? "") ?? .right
+        edgeGripBar = d.object(forKey: "edgeGripBar") as? Bool ?? false
+        edgePlacement = d.object(forKey: "edgePlacement") as? Bool ?? true
         dismissHotKeyEnabled = d.object(forKey: "dismissHotKeyEnabled") as? Bool ?? true
         clickPeekDismisses = d.object(forKey: "clickPeekDismisses") as? Bool ?? true
         hoverExpandsPeek = d.object(forKey: "hoverExpandsPeek") as? Bool ?? false
