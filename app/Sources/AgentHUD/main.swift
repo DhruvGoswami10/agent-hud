@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var registryReporter: Process?
     private var aliasTimer: Timer?
     private var sweepTimer: Timer?
+    private var reliefTimer: Timer?
     private var updateTimer: Timer?
     private var awakeTimer: Timer?
     private var hotKeyObserver: AnyCancellable?
@@ -76,6 +77,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         HostAliases.reload()
         aliasTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { _ in
             Task { @MainActor in HostAliases.reload() }
+        }
+        // Serving HTTP costs ~7KB of resident memory per request that macOS's
+        // allocator keeps but never reuses — a few hundred MB a day of heap it
+        // is holding for nothing, which is what made the HUD get slower the
+        // longer it ran. The live heap is a tenth of that, so handing the free
+        // pages back is all it takes. Cheap, and a no-op when there's nothing
+        // to return.
+        reliefTimer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { _ in
+            malloc_zone_pressure_relief(nil, 0)
         }
         sweepTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
             Task { @MainActor in

@@ -764,8 +764,9 @@ final class AppState: ObservableObject {
     func syncRegistry(host rawHost: String, entries: [LocalSessionEntry], usage: [String: Int] = [:], hours: [Int: Int] = [:]) {
         let host = Host.normalize(rawHost)
         hostLastReport[host] = Date()
-        if !usage.isEmpty { hostUsage[host] = usage }
-        if !hours.isEmpty { hostHours[host] = hours }
+        // Same reason as applyStats: an unchanged reading must not republish.
+        if !usage.isEmpty, hostUsage[host] != usage { hostUsage[host] = usage }
+        if !hours.isEmpty, hostHours[host] != hours { hostHours[host] = hours }
         let primed = registryActive[host] != nil
         let last = registryActive[host] ?? []
         let present = Set(entries.map(\.sessionId))
@@ -800,10 +801,15 @@ final class AppState: ObservableObject {
         // Snapshots for sessions this host no longer lists are dead weight —
         // nothing evicted them, so the dictionary grew for the life of the
         // app. A finish still waiting on its verdict keeps its snapshot.
-        latestEntries = latestEntries.filter { key, _ in
+        let keep = { (key: String) -> Bool in
             guard key.hasPrefix(prefix) else { return true }
             let sid = String(key.dropFirst(prefix.count))
-            return present.contains(sid) || pendingFinish[key] != nil
+            return present.contains(sid) || self.pendingFinish[key] != nil
+        }
+        // Rebuilding the dictionary every heartbeat allocated one for nothing
+        // in the overwhelmingly common case where there is nothing to evict.
+        if latestEntries.keys.contains(where: { !keep($0) }) {
+            latestEntries = latestEntries.filter { key, _ in keep(key) }
         }
         // Drop long-finished sessions so the list stays live.
         let stale = sessions.contains { $0.kind == .done && Date().timeIntervalSince($0.updated) > 1800 }
@@ -823,7 +829,7 @@ final class AppState: ObservableObject {
         }
         let project = (e.cwd as NSString).lastPathComponent
         if let i = sessions.firstIndex(where: { $0.id == key }) {
-            if !e.name.isEmpty { sessions[i].sessionName = e.name }
+            if !e.name.isEmpty, sessions[i].sessionName != e.name { sessions[i].sessionName = e.name }
             applyStats(e, at: i)
             if sessions[i].kind == .done {
                 sessions[i].kind = .running
@@ -847,26 +853,34 @@ final class AppState: ObservableObject {
         if let i = sessions.firstIndex(where: { $0.id == key }) { applyStats(e, at: i) }
     }
 
+    /// Every write to a `@Published` array republishes the whole object graph
+    /// whether or not the value changed — and a registry heartbeat lands every
+    /// few seconds from every machine, almost always carrying the numbers we
+    /// already have. Mutating in place cost one publish per field per session
+    /// per heartbeat, and each of those re-ran every mounted SwiftUI view and
+    /// rebuilt the menu-bar icon. Stage the update, publish only a real one.
     private func applyStats(_ e: LocalSessionEntry, at i: Int) {
+        var s = sessions[i]
         // Which tool reported it — a Codex session must not wear Claude's mark.
-        if !e.app.isEmpty { sessions[i].app = e.app }
-        if !e.model.isEmpty { sessions[i].model = e.model }
-        if !e.effort.isEmpty { sessions[i].effort = e.effort }
+        if !e.app.isEmpty { s.app = e.app }
+        if !e.model.isEmpty { s.model = e.model }
+        if !e.effort.isEmpty { s.effort = e.effort }
         if e.ctxUsed > 0 {
-            sessions[i].ctxUsed = e.ctxUsed
-            sessions[i].lastIn = e.lastIn
-            sessions[i].lastOut = e.lastOut
+            s.ctxUsed = e.ctxUsed
+            s.lastIn = e.lastIn
+            s.lastOut = e.lastOut
         }
         if e.totalTokens > 0 {
-            sessions[i].totalTokens = e.totalTokens
-            sessions[i].turns = e.turns
+            s.totalTokens = e.totalTokens
+            s.turns = e.turns
         }
         if e.filesChanged > 0 {
-            sessions[i].filesChanged = e.filesChanged
-            sessions[i].linesAdded = e.linesAdded
-            sessions[i].linesRemoved = e.linesRemoved
-            sessions[i].topFile = e.topFile
+            s.filesChanged = e.filesChanged
+            s.linesAdded = e.linesAdded
+            s.linesRemoved = e.linesRemoved
+            s.topFile = e.topFile
         }
+        if s != sessions[i] { sessions[i] = s }
     }
 
     /// How long a status flip waits for a fresher snapshot before judging the

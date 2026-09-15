@@ -96,8 +96,11 @@ final class StatusItemController: NSObject {
         menu.addItem(makeItem("Quit Agent HUD", #selector(quit), "q"))
         item.menu = menu
 
+        // One registry heartbeat fires several publishes; the menu bar only
+        // needs the settled result. Throttling collapses the burst into one
+        // refresh instead of one per published field.
         cancellable = state.objectWillChange
-            .receive(on: DispatchQueue.main)
+            .throttle(for: .milliseconds(150), scheduler: DispatchQueue.main, latest: true)
             .sink { [weak self] _ in Task { @MainActor in self?.refresh() } }
         updaterCancellable = Updater.shared.objectWillChange
             .receive(on: DispatchQueue.main)
@@ -111,18 +114,55 @@ final class StatusItemController: NSObject {
         return m
     }
 
+    /// Everything `refresh()` actually displays. Rendering a fresh NSImage and
+    /// rewriting a dozen menu items on every published field — several times a
+    /// second, forever — is most of what a heartbeat used to cost.
+    private struct Display: Equatable {
+        var aggregate: String
+        var notifs, sounds, copy, sideBars, edgeLeft, music, muted, awake, autoAwake: Bool
+        var login, notifBlocked: Bool
+        var anim, awakeTitle, updateTitle: String
+    }
+    private var shown: Display?
+    private var icons: [String: NSImage] = [:]
+
+    private func icon(for agg: EventKind) -> NSImage? {
+        if let cached = icons[agg.rawValue] { return cached }
+        guard let base = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Agent HUD") else { return nil }
+        let img: NSImage?
+        if agg == .info {
+            base.isTemplate = true
+            img = base
+        } else {
+            img = base.withSymbolConfiguration(.init(paletteColors: [agg.nsColor]))
+            img?.isTemplate = false
+        }
+        icons[agg.rawValue] = img
+        return img
+    }
+
     private func refresh() {
         let agg = state.aggregate
-        let base = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Agent HUD")
-        if agg == .info {
-            base?.isTemplate = true
-            item.button?.image = base
-        } else {
-            let cfg = NSImage.SymbolConfiguration(paletteColors: [agg.nsColor])
-            let img = base?.withSymbolConfiguration(cfg)
-            img?.isTemplate = false
-            item.button?.image = img
-        }
+        let awakeTitle: String = {
+            guard let left = state.awakeRemaining else { return "Keep Mac Awake" }
+            let m = Int(left / 60) + (Int(left) % 60 > 0 ? 1 : 0)
+            return "Keep Mac Awake — \(m)m left"
+        }()
+        let updater = Updater.shared
+        let updateTitle: String = updater.checking ? "Checking for Updates…"
+            : (updater.updateAvailable ? updater.latest.map { "Update Available: \($0)" } ?? "Check for Updates…"
+                                       : "Check for Updates…")
+        let now = Display(aggregate: agg.rawValue,
+                          notifs: state.systemNotifications, sounds: state.sounds,
+                          copy: state.expandOnCopy, sideBars: state.sideBars,
+                          edgeLeft: state.edgeSide == .left, music: state.musicEnabled,
+                          muted: state.muted, awake: state.keepAwake, autoAwake: state.autoAwake,
+                          login: state.openAtLogin, notifBlocked: state.notificationsBlocked,
+                          anim: state.animStyle.rawValue, awakeTitle: awakeTitle,
+                          updateTitle: updateTitle)
+        guard now != shown else { return }
+        shown = now
+        item.button?.image = icon(for: agg)
         notifItem?.state = state.systemNotifications ? .on : .off
         soundItem?.state = state.sounds ? .on : .off
         copyItem?.state = state.expandOnCopy ? .on : .off
@@ -134,26 +174,14 @@ final class StatusItemController: NSObject {
         autoAwakeItem?.state = state.autoAwake ? .on : .off
         // Show the countdown where the hold was started, so a forgotten
         // timer is visible rather than a mystery.
-        if let left = state.awakeRemaining {
-            let m = Int(left / 60) + (Int(left) % 60 > 0 ? 1 : 0)
-            awakeItem?.title = "Keep Mac Awake — \(m)m left"
-        } else {
-            awakeItem?.title = "Keep Mac Awake"
-        }
+        awakeItem?.title = awakeTitle
         for item in animItems {
             item.state = (item.representedObject as? String) == state.animStyle.rawValue ? .on : .off
         }
         loginItem?.state = state.openAtLogin ? .on : .off
         // Only present when there is something wrong to say.
         notifWarningItem?.isHidden = !state.notificationsBlocked
-        let updater = Updater.shared
-        if updater.checking {
-            updateItem?.title = "Checking for Updates…"
-        } else if updater.updateAvailable, let latest = updater.latest {
-            updateItem?.title = "Update Available: \(latest)"
-        } else {
-            updateItem?.title = "Check for Updates…"
-        }
+        updateItem?.title = updateTitle
     }
 
     @objc private func openHUD() { state.openPanel() }

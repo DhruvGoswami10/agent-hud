@@ -822,20 +822,37 @@ def payload():
     return body
 
 
+# The HUD drops a host it hasn't heard from in 90s, so a quiet machine still
+# has to say something — but every few seconds, forever, is what made the app
+# grow by hundreds of MB a day: each POST is a fresh connection plus a full
+# pass through the app's state and every mounted view. An unchanged snapshot
+# tells the HUD nothing it doesn't already have, so send it on a slow clock.
+HEARTBEAT = float(os.environ.get("AGENT_HUD_HEARTBEAT", "30"))
+
+
+def should_send(body, last_body, last_sent, now):
+    """Send when something changed, or when the HUD needs proof we're alive."""
+    return body != last_body or now - last_sent >= HEARTBEAT
+
+
 def main():
     if os.environ.get("AGENT_HUD_ONESHOT"):
         print(json.dumps(payload(), indent=1))
         return
+    last_body, last_sent = None, 0.0
     while True:
         body = json.dumps(payload()).encode()
-        try:
-            req = urllib.request.Request(
-                URL + "/sessions", data=body,
-                headers={"Content-Type": "application/json"},
-            )
-            urllib.request.urlopen(req, timeout=3).read()
-        except Exception:
-            pass
+        now = time.time()
+        if should_send(body, last_body, last_sent, now):
+            try:
+                req = urllib.request.Request(
+                    URL + "/sessions", data=body,
+                    headers={"Content-Type": "application/json"},
+                )
+                urllib.request.urlopen(req, timeout=3).read()
+                last_body, last_sent = body, now
+            except Exception:
+                pass  # retry next tick; don't record it as sent
         time.sleep(INTERVAL)
 
 

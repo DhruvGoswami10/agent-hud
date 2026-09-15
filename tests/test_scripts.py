@@ -458,6 +458,35 @@ class CodexSessionNameTests(unittest.TestCase):
                          "redesign the nav")
 
 
+class HeartbeatPacingTests(unittest.TestCase):
+    """The reporter used to POST a full snapshot every few seconds forever.
+    Each POST is a fresh connection plus a full pass through the app's state
+    and every mounted view — which grew the HUD by hundreds of MB a day. An
+    unchanged snapshot tells the HUD nothing, so it goes on a slow clock; the
+    HUD drops a host after 90s of silence, so the clock has to stay well
+    inside that."""
+
+    def setUp(self):
+        self.mod = load_registry()
+
+    def test_changed_snapshot_is_sent_immediately(self):
+        self.assertTrue(self.mod.should_send(b"new", b"old", last_sent=1000.0, now=1001.0))
+
+    def test_identical_snapshot_is_skipped(self):
+        self.assertFalse(self.mod.should_send(b"same", b"same", last_sent=1000.0, now=1005.0))
+
+    def test_quiet_machine_still_proves_it_is_alive(self):
+        self.assertTrue(self.mod.should_send(b"same", b"same", last_sent=1000.0,
+                                             now=1000.0 + self.mod.HEARTBEAT))
+
+    def test_heartbeat_stays_well_inside_the_huds_90s_cutoff(self):
+        self.assertLessEqual(self.mod.HEARTBEAT, 45,
+                             "a host silent for 90s is dropped; leave margin for a failed POST")
+
+    def test_first_snapshot_is_always_sent(self):
+        self.assertTrue(self.mod.should_send(b"first", None, last_sent=0.0, now=0.0))
+
+
 
 CURSOR = os.path.join(BIN, "agent-hud-cursor")
 

@@ -178,7 +178,7 @@ struct AgentEvent: Identifiable {
     }
 }
 
-struct SessionInfo: Identifiable {
+struct SessionInfo: Identifiable, Equatable {
     let id: String
     var host: String
     var project: String
