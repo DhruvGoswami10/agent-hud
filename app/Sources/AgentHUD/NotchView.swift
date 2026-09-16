@@ -5,10 +5,6 @@ struct NotchRootView: View {
     @ObservedObject var state: AppState
     let metrics: NotchWindowController.Metrics
     @State private var showContent = false
-    /// Measured from the panel itself rather than guessed from row counts, so
-    /// it stays right however the contents change.
-    @State private var panelHeight: CGFloat = 0
-    private var screenHeight: CGFloat { NotchWindowController.targetScreen()?.frame.height ?? 0 }
 
     private var topRadius: CGFloat { metrics.hasNotch ? 0 : 10 }
     private var bottomRadius: CGFloat { state.hudState.isCollapsed ? 8 : 24 }
@@ -60,9 +56,7 @@ struct NotchRootView: View {
                                                    aggregate: state.aggregate, sideBars: state.sideBars,
                                                    peekPreview: state.peekPreviewSize,
                                                    idleIndicator: state.alwaysShowIndicator,
-                                                   edgeBar: state.edgeGripBar,
-                                                   openContent: panelHeight,
-                                                   screenHeight: screenHeight)
+                                                   edgeBar: state.edgeGripBar)
         let shape = shape(for: sz)
         ZStack(alignment: .top) {
             shape
@@ -86,14 +80,8 @@ struct NotchRootView: View {
                         .opacity(showContent ? 1 : 0)
                 case .open:
                     OpenPanel(state: state)
-                        // Take the panel's ideal height, not the canvas's: the
-                        // frame below is what the measurement drives.
-                        .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, metrics.hasNotch ? metrics.notchHeight : 12)
                         .padding(edgeInset)
-                        .background(GeometryReader { g in
-                            Color.clear.preference(key: PanelHeightKey.self, value: g.size.height)
-                        })
                         .opacity(showContent ? 1 : 0)
                 }
             }
@@ -101,11 +89,6 @@ struct NotchRootView: View {
             // the content's own bounds and glows render as a second card.
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .clipShape(shape)
-        }
-        .onPreferenceChange(PanelHeightKey.self) { h in
-            guard h > 0, abs(h - panelHeight) > 0.5 else { return }
-            panelHeight = h
-            state.openPanelHeight = h
         }
         .frame(width: sz.width, height: sz.height, alignment: .top)
         .animation(state.hudState.isCollapsed ? state.animStyle.collapseAnimation : state.animStyle.animation, value: sz)
@@ -186,14 +169,6 @@ extension NotchRootView {
                 state.edgeAnchor = Double((screen.frame.maxY - mouse.y) / screen.frame.height)
             }
             .onEnded { _ in state.edgeDragging = false }
-    }
-}
-
-/// The open panel's measured height, reported up from the panel itself.
-struct PanelHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
     }
 }
 
@@ -638,10 +613,11 @@ private struct OpenPanel: View {
                     if state.musicEnabled, let np = state.nowPlaying { musicBar(np) }
                     if !state.clipboard.isEmpty { clipboardStrip }
                 }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 DetailPane(state: state)
                     .frame(width: 236)
             }
+            .frame(maxHeight: .infinity)
             BurnStrip(state: state)
         }
         .padding(.horizontal, 16)

@@ -158,11 +158,6 @@ final class AppState: ObservableObject {
     /// Set by NotchWindowController; resizes the panel window for a target state.
     var frameUpdater: ((HUDState) -> Void)?
 
-    /// The open panel's natural height, measured by the view and read back by
-    /// the window controller for hit-testing. Deliberately not @Published:
-    /// it is written during layout, and republishing there would loop.
-    var openPanelHeight: CGFloat = 0
-
     @Published var selectedSessionId: String?
 
     /// When the peek shows a copied image, the island morphs to its shape.

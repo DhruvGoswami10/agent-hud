@@ -65,25 +65,7 @@ final class NotchWindowController {
     }
 
     nonisolated static let canvasWidth: CGFloat = 800
-    // Room for the tallest panel plus its shadow. The canvas is invisible and
-    // passes clicks through everywhere except the shape, so spare height costs
-    // nothing — and without it a tall panel is clipped by its own window.
-    nonisolated static let canvasHeight: CGFloat = 880
-
-    /// The open panel sizes itself to what it is showing. It used to be a flat
-    /// 760x520 and simply clipped the overflow, so the burn strip along the
-    /// bottom vanished the moment a second account card appeared. Bounded so a
-    /// long session list can never swallow the screen.
-    nonisolated static let openWidth: CGFloat = 760
-    nonisolated static let openMinHeight: CGFloat = 520
-    nonisolated static let openMaxHeight: CGFloat = 760
-
-    nonisolated static func openHeight(content: CGFloat, screenHeight: CGFloat) -> CGFloat {
-        // Leave the menu bar and a margin below, so the panel never runs off
-        // the bottom of a short display.
-        let room = screenHeight > 0 ? max(openMinHeight, screenHeight - 140) : openMaxHeight
-        return min(max(content, openMinHeight), min(openMaxHeight, room))
-    }
+    nonisolated static let canvasHeight: CGFloat = 600
 
     private let panel = NotchPanel()
     private let state: AppState
@@ -185,9 +167,7 @@ final class NotchWindowController {
                                   aggregate: state.aggregate, sideBars: state.sideBars,
                                   peekPreview: state.peekPreviewSize,
                                   idleIndicator: state.alwaysShowIndicator,
-                                  edgeBar: state.edgeGripBar,
-                                  openContent: state.openPanelHeight,
-                                  screenHeight: screen.frame.height)
+                                  edgeBar: state.edgeGripBar)
         let mouse = NSEvent.mouseLocation
         // Clicks pass through anywhere outside the black shape itself, so the
         // looser hover boundary never steals a click from the window beneath.
@@ -210,9 +190,7 @@ final class NotchWindowController {
                                         aggregate: EventKind, sideBars: Bool,
                                         peekPreview: CGSize? = nil,
                                         idleIndicator: Bool = false,
-                                        edgeBar: Bool = false,
-                                        openContent: CGFloat = 0,
-                                        screenHeight: CGFloat = 0) -> NSSize {
+                                        edgeBar: Bool = false) -> NSSize {
         if m.edge != nil, case .collapsed = target {
             // Nothing to hide inside on a plain edge, so rest is a sliver that
             // stays hoverable, and news is what earns the full silhouette.
@@ -250,8 +228,7 @@ final class NotchWindowController {
             }
             return NSSize(width: w, height: h)
         case .open:
-            return NSSize(width: openWidth,
-                          height: openHeight(content: openContent, screenHeight: screenHeight))
+            return NSSize(width: 760, height: 520)
         }
     }
 

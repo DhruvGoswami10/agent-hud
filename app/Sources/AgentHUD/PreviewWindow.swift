@@ -63,7 +63,7 @@ private struct LidView: View {
                 NotchRootView(state: state,
                               metrics: NotchWindowController.Metrics(
                                 notchWidth: notch.width, notchHeight: notch.height, hasNotch: true))
-                    .frame(width: 820, height: 900, alignment: .top)
+                    .frame(width: 820, height: 620, alignment: .top)
                     .allowsHitTesting(true)
             }
             .scaleEffect(scale, anchor: .top)
