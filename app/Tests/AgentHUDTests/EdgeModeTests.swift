@@ -218,3 +218,50 @@ final class EdgePreferenceTests: XCTestCase {
         s.edgeGripBar = false
     }
 }
+
+/// The open panel was a flat 760x520 that clipped whatever didn't fit — the
+/// burn strip along the bottom disappeared the moment a second account card
+/// appeared. It now grows to its content, bounded so it can't swallow a screen.
+final class OpenPanelSizeTests: XCTestCase {
+    private func size(content: CGFloat, screen: CGFloat = 982) -> NSSize {
+        NotchWindowController.contentSize(for: .open,
+                                          metrics: .init(notchWidth: 200, notchHeight: 32, hasNotch: true),
+                                          aggregate: .running, sideBars: true,
+                                          openContent: content, screenHeight: screen)
+    }
+
+    func testTallContentGrowsThePanelInsteadOfClipping() {
+        XCTAssertEqual(size(content: 610).height, 610, "two account cards plus a long session list must fit")
+        XCTAssertGreaterThan(size(content: 610).height, NotchWindowController.openMinHeight)
+    }
+
+    func testShortContentKeepsTheFamiliarSize() {
+        XCTAssertEqual(size(content: 300).height, NotchWindowController.openMinHeight)
+        XCTAssertEqual(size(content: 0).height, NotchWindowController.openMinHeight,
+                       "before the first measurement it must look exactly as it always did")
+    }
+
+    func testItNeverSwallowsTheScreen() {
+        XCTAssertEqual(size(content: 5000).height, NotchWindowController.openMaxHeight)
+        // A short display clamps harder still: menu bar plus a margin below.
+        XCTAssertEqual(size(content: 5000, screen: 800).height, 660)
+        XCTAssertLessThan(size(content: 5000, screen: 800).height, 800)
+    }
+
+    /// Even a tiny display gets a usable panel rather than a sliver.
+    func testAVeryShortDisplayStillGetsTheMinimum() {
+        XCTAssertEqual(size(content: 5000, screen: 500).height, NotchWindowController.openMinHeight)
+    }
+
+    /// Whatever it grows to has to fit inside the window it is drawn in.
+    func testTheTallestPanelFitsTheCanvas() {
+        XCTAssertLessThanOrEqual(NotchWindowController.openMaxHeight,
+                                 NotchWindowController.canvasHeight,
+                                 "a panel taller than its canvas is clipped by the window itself")
+        XCTAssertLessThanOrEqual(NotchWindowController.openWidth, NotchWindowController.canvasWidth)
+    }
+
+    func testWidthIsUnchanged() {
+        XCTAssertEqual(size(content: 700).width, 760)
+    }
+}
