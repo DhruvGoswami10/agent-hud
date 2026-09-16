@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var awakeTimer: Timer?
     private var hotKeyObserver: AnyCancellable?
     private var terminating = false
-    private var notchController: NotchWindowController!
+    private var notchController: NotchWindowController?
     private var previewController: PreviewWindowController!
     private var statusItemController: StatusItemController!
 
@@ -30,7 +30,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let state = AppState()
         self.state = state
-        notchController = NotchWindowController(state: state)
+        // The drawn MacBook renders the same HUD from the same state, so
+        // running the floating panel alongside it shows everything twice.
+        if !Playground.lid {
+            notchController = NotchWindowController(state: state)
+        }
         // The playground opens a drawn MacBook instead of fighting for the
         // real notch — there is no macOS simulator, and a VM has no cutout.
         previewController = PreviewWindowController(state: state)
@@ -69,8 +73,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         awakeTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
             Task { @MainActor in state.updateCaffeine() }
         }
-        clipboardWatcher = ClipboardWatcher { item in state.clipboardChanged(item) }
-        clipboardWatcher.start()
+        // Staged screenshots must never pick up the real pasteboard.
+        if !Playground.noReporter {
+            clipboardWatcher = ClipboardWatcher { item in state.clipboardChanged(item) }
+            clipboardWatcher.start()
+        }
         musicWatcher = MusicWatcher(state: state)
         musicWatcher.start()
         startLocalRegistryReporter()
@@ -134,6 +141,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// it resolves real session names from transcript custom-title records,
     /// which the live registry loses on resume.
     private func startLocalRegistryReporter() {
+        // Screenshots for the README are fed synthetic sessions on purpose —
+        // the real ones carry private project names and internal hostnames.
+        if Playground.noReporter { return }
         if !Playground.on {
             // Only the real instance may reap stray reporters — the playground
             // sharing this would kill the live app's feed.

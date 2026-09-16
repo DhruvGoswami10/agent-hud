@@ -45,6 +45,20 @@ playground-edge: bundle
 	AGENT_HUD_PLAYGROUND=1 AGENT_HUD_EDGE=$${EDGE:-right} open -n $(PLAY)
 	@echo "playground in edge mode on the $${EDGE:-right} edge (EDGE=left to flip)"
 
+# The sandbox filled with invented sessions, for staging the README's
+# screenshots — no real names, hostnames or clipboard ever reach a PNG.
+demo: bundle
+	rm -rf $(PLAY)
+	cp -R $(APP) $(PLAY)
+	/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier dev.dhruv.agenthud.playground" $(PLAY)/Contents/Info.plist
+	/usr/libexec/PlistBuddy -c "Set :CFBundleName AgentHUD Playground" $(PLAY)/Contents/Info.plist
+	codesign --force --sign - $(PLAY)
+	-pkill -f "AgentHUD-Playground" 2>/dev/null || true
+	AGENT_HUD_PLAYGROUND=1 AGENT_HUD_NO_REPORTER=1 AGENT_HUD_PREVIEW=1 open -n $(PLAY)
+	@sleep 6
+	python3 bin/agent-hud-demo
+	@echo "playground seeded with synthetic sessions — the live HUD is untouched"
+
 # Same sandbox, but framed in a drawn MacBook window instead of floating.
 # One or the other: both at once renders the same panel twice.
 preview: playground

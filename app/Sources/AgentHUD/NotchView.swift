@@ -654,7 +654,7 @@ private struct OpenPanel: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("Agent HUD").font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
                 if Playground.on {
-                    Text("PLAYGROUND · :\(Playground.port)")
+                    Text("PLAYGROUND · :" + String(Playground.port))
                         .font(.system(size: 8, weight: .bold)).kerning(0.8)
                         .foregroundStyle(.black)
                         .padding(.horizontal, 5).padding(.vertical, 2)

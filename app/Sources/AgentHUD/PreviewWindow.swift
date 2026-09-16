@@ -26,7 +26,7 @@ final class PreviewWindowController {
             return
         }
         let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 980, height: 660),
+            contentRect: NSRect(x: 0, y: 0, width: 980, height: 900),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
         w.title = "MacBook Preview — Agent HUD Playground"
@@ -71,7 +71,7 @@ private struct LidView: View {
             .clipShape(RoundedRectangle(cornerRadius: 16 * scale, style: .continuous))
         }
         .background(Color(white: 0.06))
-        .onAppear { state.openPanel() }
+        .onAppear { if !Playground.startCollapsed { state.openPanel() } }
     }
 
     private var menuBar: some View {

@@ -22,8 +22,12 @@
 
 # Agent HUD
 
-A notch-style HUD for AI agents. A black panel hugs the MacBook notch (or floats
-top-center on external displays) and slides out when:
+<p align="center">
+  <img src="assets/notch.gif" alt="An agent asks to run a command, the notch turns orange and slides out; it finishes and the slide-out turns green" width="760">
+</p>
+
+A notch-style HUD for AI agents. A black panel hugs the MacBook notch (a side
+notch on displays that have none) and slides out when:
 
 - a **Claude Code agent finishes a turn** (green, shows the final reply snippet)
 - an agent **needs approval / input** (orange, sticky, counts pending items)
@@ -43,6 +47,18 @@ Claude Code hook (Mac or VM)
                                              ├─ macOS notification + sound
                                              └─ clipboard previews (local watcher)
 ```
+
+## The panel
+
+Hover the notch and it opens: every session across every machine, real rate
+limits per account, what changed this session, and the last 48 hours of burn.
+
+<p align="center">
+  <img src="assets/panel.png" alt="The open panel: rate limits for two Claude accounts and one Codex account, four live sessions, the selected session's context and diff, and a 48-hour burn strip" width="860">
+</p>
+
+<sub>Screenshots are staged with synthetic sessions (<code>make demo</code>) — the
+numbers and names are examples, not anyone's real work.</sub>
 
 ## Build & run (Mac)
 

@@ -45,6 +45,15 @@ enum Playground {
     /// which is confusing rather than useful. `make preview` asks for it.
     static var lid: Bool { ProcessInfo.processInfo.environment["AGENT_HUD_PREVIEW"] == "1" }
 
+    /// Leave the local reporter unstarted, so the HUD shows only what is fed
+    /// to it over HTTP. Used to stage the screenshots in the README.
+    static var noReporter: Bool { ProcessInfo.processInfo.environment["AGENT_HUD_NO_REPORTER"] == "1" }
+
+    /// Start collapsed rather than with the panel open, so events arriving
+    /// over HTTP drive the HUD exactly as they do in real use. Used to record
+    /// the animation in the README.
+    static var startCollapsed: Bool { ProcessInfo.processInfo.environment["AGENT_HUD_START_COLLAPSED"] == "1" }
+
     /// Force the side-notch placement on a screen that has a notch, so edge
     /// mode can be tried on the MacBook's own display: "1", "right" or "left".
     static var forceEdge: String? {
