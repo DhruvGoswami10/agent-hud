@@ -54,7 +54,7 @@ Hover the notch and it opens: every session across every machine, real rate
 limits per account, what changed this session, and the last 48 hours of burn.
 
 <p align="center">
-  <img src="assets/panel.png" alt="The open panel: rate limits for two Claude accounts and one Codex account, four live sessions, the selected session's context and diff, and a 48-hour burn strip" width="860">
+  <img src="assets/panel.png" alt="The open panel: rate limits for a Claude account and a Codex account, three live sessions, the selected session's context and diff, and a 48-hour burn strip" width="860">
 </p>
 
 <sub>Screenshots are staged with synthetic sessions (<code>make demo</code>) — the

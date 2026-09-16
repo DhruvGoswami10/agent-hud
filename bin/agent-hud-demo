@@ -68,9 +68,8 @@ def main():
                     top_file="handlers.rs"),
         ],
         "usage": {"h5": 190000, "d7": 900000, "h5_peak": 300000, "hours": {}},
-        "limits": account("acct-2", "Pro",
-                          [("session", "5h", 12, "normal", soon),
-                           ("weekly_all", "Week", 27, "normal", week)]),
+        # Two accounts, not three: the panel is a fixed height, and a third
+        # card pushes the burn strip off the bottom.
         "limits_extra": [account("codex-acct", "Business",
                                  [("primary", "Week", 18, "normal", week)],
                                  provider="openai", source="codex-rollout")],
