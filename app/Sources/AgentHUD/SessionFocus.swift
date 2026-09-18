@@ -1,4 +1,5 @@
 import AppKit
+import Network
 
 /// Navigation metadata, never executable commands supplied by an adapter.
 struct SessionFocus: Equatable, Sendable {
@@ -12,6 +13,7 @@ struct SessionFocus: Equatable, Sendable {
     var tty = ""
     var browserClient = ""
     var browserTab = ""
+    var sshConnection = ""
 
     init(json: [String: Any] = [:], cwd: String = "") {
         self.cwd = cwd.hasPrefix("/") ? cwd : ""
@@ -31,6 +33,15 @@ struct SessionFocus: Equatable, Sendable {
         browserClient = Self.uuid(json["browser_client"] as? String)
         if let raw = json["browser_tab"] as? String,
            raw.range(of: #"^\d{1,12}$"#, options: .regularExpression) != nil { browserTab = raw }
+        if let raw = json["ssh_connection"] as? String, raw.count <= 160 {
+            let p = raw.split(whereSeparator: \.isWhitespace).map(String.init)
+            if p.count == 4, (IPv4Address(p[0]) != nil || IPv6Address(p[0]) != nil),
+               (IPv4Address(p[2]) != nil || IPv6Address(p[2]) != nil),
+               let clientPort = UInt16(p[1]), clientPort > 0,
+               let serverPort = UInt16(p[3]), serverPort > 0 {
+                sshConnection = p.joined(separator: " ")
+            }
+        }
     }
 
     private static func uuid(_ raw: String?) -> String {
@@ -44,7 +55,7 @@ struct SessionFocus: Equatable, Sendable {
         "com.google.Chrome", "com.apple.Safari", "com.microsoft.edgemac", "com.brave.Browser", "org.mozilla.firefox"]
     var hasBrowserTab: Bool { !url.isEmpty && !browserClient.isEmpty && !browserTab.isEmpty }
     var hasLocation: Bool {
-        !workspace.isEmpty || !url.isEmpty || !cwd.isEmpty || !application.isEmpty || !warpURL.isEmpty || hasBrowserTab
+        !workspace.isEmpty || !url.isEmpty || !cwd.isEmpty || !application.isEmpty || !warpURL.isEmpty || hasBrowserTab || !sshConnection.isEmpty
     }
 
     static func isWarpSessionURL(_ raw: String) -> Bool {
@@ -60,10 +71,15 @@ struct SessionFocus: Equatable, Sendable {
     /// supplied by the agent's hook, or every heartbeat breaks jump-back.
     func merging(_ newer: SessionFocus) -> SessionFocus {
         var result = self
+        if !newer.sshConnection.isEmpty, newer.sshConnection != sshConnection {
+            result.workspace = ""; result.surface = ""; result.warpURL = ""
+            result.terminalID = ""; result.tty = ""; result.application = ""
+        }
         if !newer.application.isEmpty, newer.application != application {
             result.workspace = ""; result.surface = ""; result.warpURL = ""
             result.terminalID = ""; result.tty = ""
             result.url = ""; result.browserClient = ""; result.browserTab = ""
+            result.sshConnection = ""
         }
         if !newer.workspace.isEmpty, newer.workspace != workspace { result.surface = "" }
         if !newer.browserClient.isEmpty, newer.browserClient != browserClient { result.browserTab = "" }
@@ -78,16 +94,21 @@ struct SessionFocus: Equatable, Sendable {
         if !newer.tty.isEmpty { result.tty = newer.tty }
         if !newer.browserClient.isEmpty { result.browserClient = newer.browserClient }
         if !newer.browserTab.isEmpty { result.browserTab = newer.browserTab }
+        if !newer.sshConnection.isEmpty { result.sshConnection = newer.sshConnection }
         return result
     }
 
-    func actionTitle(app: String, local: Bool = true) -> String {
-        if hasBrowserTab || !warpURL.isEmpty { return "Open session" }
-        if !url.isEmpty { return "Open conversation" }
-        if !workspace.isEmpty || (local && (!terminalID.isEmpty || !tty.isEmpty)) { return "Open session" }
-        if local, app == "cursor", !cwd.isEmpty { return "Open workspace" }
-        if application.hasPrefix("dev.warp.") { return "Open Warp" }
-        return application.isEmpty ? "Location unavailable" : "Open app"
+    var actionTitle: String { "Go to session" }
+
+    func canJumpBack(app: String, local: Bool) -> Bool {
+        !workspace.isEmpty || !warpURL.isEmpty || !url.isEmpty || !sshConnection.isEmpty ||
+            !application.isEmpty || (local && app == "cursor" && !cwd.isEmpty)
+    }
+
+    var cmuxURL: URL? {
+        guard !workspace.isEmpty else { return nil }
+        let path = "cmux://workspace/" + workspace + (surface.isEmpty ? "" : "/surface/" + surface)
+        return URL(string: path)
     }
 
     @MainActor
@@ -104,22 +125,26 @@ struct SessionFocus: Equatable, Sendable {
             } else { completion(NSWorkspace.shared.open(u) ? nil : "The conversation could not be opened.") }
             return
         }
-        // UUIDs identify a local cmux pane even when its agent runs over SSH.
-        if !workspace.isEmpty {
-            let tool = "/Applications/cmux.app/Contents/Resources/bin/cmux"
-            if FileManager.default.isExecutableFile(atPath: tool) {
-                let commands = [["select-workspace", "--workspace", workspace]] +
-                    (surface.isEmpty ? [] : [["focus-panel", "--panel", surface, "--workspace", workspace]])
-                DispatchQueue.global(qos: .userInitiated).async {
-                    let ok = commands.allSatisfy { Self.run(tool, arguments: $0) }
-                    DispatchQueue.main.async {
-                        if ok { Self.activate("com.cmuxterm.app") }
-                        completion(ok ? nil : "This cmux pane is no longer available.")
+        // The public navigation link works from a standalone menu-bar app.
+        // Its private control socket correctly rejects non-cmux processes.
+        if let target = cmuxURL {
+            completion(NSWorkspace.shared.open(target) ? nil : "cmux could not open this session.")
+            return
+        }
+        if !sshConnection.isEmpty {
+            let helper = SupportPaths.bin.appendingPathComponent("hud_ssh_focus.py").path
+            DispatchQueue.global(qos: .userInitiated).async {
+                let result = Self.resolveSSH(helper: helper, connection: sshConnection)
+                DispatchQueue.main.async {
+                    if let json = result["focus"] as? [String: Any] {
+                        var resolved = SessionFocus(json: json)
+                        resolved.sshConnection = ""
+                        resolved.open(app: app, local: true, completion: completion)
+                    } else {
+                        completion(result["error"] as? String ?? "Could not find this session's connected terminal.")
                     }
                 }
-                return
             }
-            completion("cmux is not available on this Mac.")
             return
         }
         if local, ["com.apple.Terminal", "com.googlecode.iterm2"].contains(application),
@@ -147,7 +172,21 @@ struct SessionFocus: Equatable, Sendable {
             }
             return
         }
-        completion("This session has not reported its location yet. Its next agent turn can capture it.")
+        completion("This session has no linked terminal or browser window yet.")
+    }
+
+    private static func resolveSSH(helper: String, connection: String) -> [String: Any] {
+        let process = Process(); process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["python3", helper, "--resolve", connection]
+        let pipe = Pipe(); process.standardOutput = pipe
+        process.standardInput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return [:] }
+        let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 12, execute: timeout)
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit(); timeout.cancel()
+        guard process.terminationStatus == 0, data.count <= 8192 else { return [:] }
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 
     private static func run(_ tool: String, arguments: [String]) -> Bool {
@@ -158,10 +197,6 @@ struct SessionFocus: Equatable, Sendable {
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 15, execute: timeout)
         p.waitUntilExit(); timeout.cancel()
         return p.terminationStatus == 0
-    }
-
-    @MainActor private static func activate(_ identifier: String) {
-        NSRunningApplication.runningApplications(withBundleIdentifier: identifier).first?.activate(options: [.activateAllWindows])
     }
 
     // Arguments stay data. Never interpolate a path, identifier, or command

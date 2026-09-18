@@ -520,18 +520,8 @@ private struct PeekView: View {
                 // peek says where the sound lives at a glance.
                 MusicSourceMark(app: np.app, size: 16)
             }
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.65))
-                    .frame(width: 28, height: 28)
-                    .background(.white.opacity(0.08), in: Circle())
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .help("Dismiss this notification")
-            .accessibilityLabel("Dismiss notification")
         }
+        .accessibilityAction(named: Text("Dismiss notification"), onDismiss)
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -968,7 +958,7 @@ private struct SessionCard: View {
             Spacer(minLength: 6)
             if session.kind == .attention {
                 Button(action: onReview) {
-                    Text(session.focus.actionTitle(app: session.app))
+                    Text(session.focus.actionTitle)
                         .font(.system(size: 10.5, weight: .semibold))
                         .foregroundStyle(.black)
                         .padding(.horizontal, 10)
@@ -976,6 +966,7 @@ private struct SessionCard: View {
                         .background(Capsule().fill(EventKind.attention.color))
                 }
                 .buttonStyle(.plain)
+                .disabled(!session.focus.canJumpBack(app: session.app, local: AppState.Host.isLocal(session.host)))
             } else {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(session.updated, style: .relative)
@@ -1095,10 +1086,14 @@ private struct DetailPane: View {
                 if !s.message.isEmpty {
                     Text(s.message).font(.system(size: 10)).foregroundStyle(.white.opacity(0.5)).lineLimit(3)
                 }
-                Button(s.focus.actionTitle(app: s.app, local: AppState.Host.isLocal(s.host))) { state.focusSession(s) }
+                Button(s.focus.actionTitle) { state.focusSession(s) }
                     .buttonStyle(.bordered)
-                    .disabled(state.navigationBusy)
-                    .help("Opens the recorded location when available; otherwise opens the source app.")
+                    .disabled(state.navigationBusy || !s.focus.canJumpBack(app: s.app, local: AppState.Host.isLocal(s.host)))
+                    .help("Return to the session's linked window, tab, or pane.")
+                if !s.focus.canJumpBack(app: s.app, local: AppState.Host.isLocal(s.host)) {
+                    Text("No linked window yet")
+                        .font(.system(size: 10)).foregroundStyle(.white.opacity(0.6))
+                }
                 if !state.navigationMessage.isEmpty {
                     Text(state.navigationMessage)
                         .font(.system(size: 10)).foregroundStyle(.white.opacity(0.6))

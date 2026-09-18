@@ -45,6 +45,7 @@ python3 "$SCRIPT_DIR/install-hooks.py" --uninstall || exit 1
 # 4. Caches.
 rm -rf "$HOME/.cache/agent-hud" && echo "· removed ~/.cache/agent-hud"
 rm -rf "$HOME/Library/Application Support/AgentHUD/session-focus" && echo "· removed saved session locations"
+rm -rf "$HOME/Library/Application Support/AgentHUD/ssh-links" && echo "· removed SSH session links"
 
 cat <<'EOF'
 

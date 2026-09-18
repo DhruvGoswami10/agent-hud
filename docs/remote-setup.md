@@ -47,6 +47,49 @@ forward, creates a tunnel only when needed, and stops only children it owns.
 It uses SSH server-alive checks to recover after network changes. Existing
 interactive tunnels can coexist; only one connection binds the remote port.
 
+## Return to the original SSH pane
+
+**Go to session** can return from a remote Claude session to its originating
+cmux pane. SSH does not normally carry the Mac's pane IDs. Agent HUD records
+the source terminal on the Mac and matches the full live SSH connection
+(client address and port, server address and port) reported by the remote
+agent. It never runs a command in that terminal.
+
+If your SSH configuration already runs `agent-hud-bootstrap` as a LocalCommand,
+updating the checkout is enough for new connections. Otherwise, add it for
+the configured host, using the absolute path to your checkout or app's script:
+
+```sshconfig
+Host my-dev-box
+    PermitLocalCommand yes
+    LocalCommand /absolute/path/to/agent-hud/bin/agent-hud-bootstrap %h >/dev/null 2>&1 &
+```
+
+The bootstrap argument (`%h` above) must match an entry in `hosts.conf`. Keep
+any existing LocalCommand tasks when adding this integration. The background
+hook captures the source terminal even when the remote reporter is current.
+cmux and Warp can provide exact pane links; Terminal and iTerm2 use the local
+TTY. Other supported terminals may provide only an app fallback.
+
+For SSH tabs already open in cmux before this update, run this once from a
+local cmux terminal:
+
+```sh
+python3 bin/hud_ssh_focus.py --capture-all
+```
+
+The updated reporter can recover an existing Claude process's SSH identity on
+Linux; the Claude session does not need to restart. cmux navigation uses its
+public `cmux://workspace/…/surface/…` link and works with the default restricted
+control socket. The initial capture runs within an authorized cmux terminal.
+
+Navigation requires that the original SSH connection remain open. Shared
+ControlMaster connections, Unix-socket forwarding (including agent forwarding),
+and sessions inside tmux/screen are not attributed automatically because they
+can make the source pane ambiguous. Proxies or NAT that change the reported
+connection addresses can also prevent a match. A host name or remote path alone
+is never used to guess a terminal tab.
+
 ## Check health
 
 ```sh

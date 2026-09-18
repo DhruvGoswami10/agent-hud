@@ -1,5 +1,6 @@
 """Capture source locations, never commands. Python 3.9+, no dependencies."""
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,22 @@ APPLICATIONS = {
     "WezTerm": "com.github.wez.wezterm",
     "vscode": "com.microsoft.VSCode",
 }
+LOCATION_ENV_KEYS = ("TERM_PROGRAM", "CMUX_WORKSPACE_ID", "CMUX_SURFACE_ID", "WARP_FOCUS_URL",
+                     "ITERM_SESSION_ID", "SSH_CONNECTION", "TMUX", "STY")
+
+
+def ssh_connection(value):
+    """A connection identity, never a hostname or a command to execute."""
+    try:
+        parts = value.split()
+        if len(parts) != 4 or len(value) > 160:
+            return ""
+        client, cport, server, sport = parts
+        if not (cport.isdecimal() and sport.isdecimal() and 0 < int(cport) < 65536 and 0 < int(sport) < 65536):
+            return ""
+        return "%s %d %s %d" % (ipaddress.ip_address(client), int(cport), ipaddress.ip_address(server), int(sport))
+    except (AttributeError, ValueError, TypeError):
+        return ""
 
 
 def valid_uuid(value):
@@ -79,7 +96,46 @@ def capture_focus(env=None, tty=None):
             focus["terminal_id"] = valid_uuid(env.get("ITERM_SESSION_ID", "").split(":")[-1])
         if app in ("com.apple.Terminal", "com.googlecode.iterm2"):
             focus["tty"] = terminal_tty() if tty is None else tty
+    # A multiplexer can outlive and switch SSH connections; its inherited
+    # SSH_CONNECTION is not proof of the client currently displaying it.
+    if not env.get("TMUX") and not env.get("STY"):
+        focus["ssh_connection"] = ssh_connection(env.get("SSH_CONNECTION", ""))
     return {k: v for k, v in focus.items() if v}
+
+
+def process_focus(pid, proc_root=Path("/proc")):
+    """Recover an already-running remote Claude's source without restarting it.
+
+    Read only a same-user process. Keep the small location allowlist in memory;
+    credentials and unrelated environment values are never returned or stored.
+    """
+    if not str(pid).isdigit() or int(pid) <= 1:
+        return {}
+    try:
+        root = proc_root / str(pid)
+        if root.stat().st_uid != os.getuid() or (root / "comm").read_text().strip() not in ("claude", "node"):
+            return {}
+        with (root / "environ").open("rb") as f:
+            raw = f.read(262145)
+        if len(raw) > 262144:
+            return {}
+        env = {}
+        for item in raw.split(b"\0"):
+            key, _, value = item.partition(b"=")
+            name = key.decode(errors="replace")
+            if name in LOCATION_ENV_KEYS:
+                env[name] = value.decode(errors="replace")
+        return capture_focus(env, tty="")
+    except OSError:
+        return {}
+
+
+def session_focus(provider, sid, pid):
+    saved = recorded_focus(provider, sid)
+    recovered = process_focus(pid)
+    if recovered and recovered != saved:
+        return remember_focus(provider, sid, recovered)
+    return saved or recovered
 
 
 def focus_dir():
@@ -114,6 +170,9 @@ def remember_focus(provider, sid, focus):
     # A resumed conversation can move to a different terminal application.
     if focus.get("application") and focus.get("application") != merged.get("application"):
         merged = {}
+    if focus.get("ssh_connection") and focus.get("ssh_connection") != merged.get("ssh_connection"):
+        for key in ("workspace", "surface", "warp_url", "terminal_id", "tty", "application"):
+            merged.pop(key, None)
     if focus.get("workspace") and focus.get("workspace") != merged.get("workspace"):
         merged.pop("surface", None)
     merged.update(focus)

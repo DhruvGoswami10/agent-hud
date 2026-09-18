@@ -50,6 +50,29 @@ class FocusTests(unittest.TestCase):
         self.assertEqual(focus.capture_focus({"TERM_PROGRAM": "Apple_Terminal"}, tty="/dev/ttys003"),
                          {"application": "com.apple.Terminal", "tty": "/dev/ttys003"})
 
+    def test_remote_hook_captures_its_ssh_connection_without_mac_environment(self):
+        connection = "192.0.2.10 49152 198.51.100.20 22"
+        self.assertEqual(focus.capture_focus({"SSH_CONNECTION": connection}),
+                         {"ssh_connection": connection})
+
+    def test_remote_connection_validation_and_multiplexer_ambiguity(self):
+        for invalid in ("host 12 server 22", "192.0.2.1 99999 192.0.2.2 22", "$(anything)"):
+            self.assertEqual(focus.ssh_connection(invalid), "")
+        for key in ("TMUX", "STY"):
+            self.assertNotIn("ssh_connection", focus.capture_focus({key: "active",
+                "SSH_CONNECTION": "192.0.2.10 49152 198.51.100.20 22"}))
+
+    def test_existing_remote_claude_is_recovered_without_exposing_other_environment(self):
+        root = Path(self.temp.name) / "proc"
+        process = root / "1234"
+        process.mkdir(parents=True)
+        (process / "comm").write_text("claude\n")
+        (process / "environ").write_bytes(b"SSH_CONNECTION=192.0.2.10 49152 198.51.100.20 22\0PRIVATE_KEY=not-for-the-hud\0")
+        self.assertEqual(focus.process_focus(1234, proc_root=root),
+                         {"ssh_connection": "192.0.2.10 49152 198.51.100.20 22"})
+        (process / "comm").write_text("unrelated\n")
+        self.assertEqual(focus.process_focus(1234, proc_root=root), {})
+
     def test_record_is_private_and_survives_a_sparse_update(self):
         data = {"application": "com.cmuxterm.app", "workspace": "workspace", "surface": "surface"}
         focus.remember_focus("codex", "S", data)
@@ -62,6 +85,11 @@ class FocusTests(unittest.TestCase):
         focus.remember_focus("codex", "S", {"application": "com.cmuxterm.app", "workspace": "old"})
         focus.remember_focus("codex", "S", {"application": "dev.warp.Warp-Stable", "warp_url": "new"})
         self.assertNotIn("workspace", focus.recorded_focus("codex", "S"))
+
+    def test_new_ssh_connection_does_not_keep_an_old_terminal_pane(self):
+        focus.remember_focus("claude", "S", {"application": "com.cmuxterm.app", "workspace": "old"})
+        focus.remember_focus("claude", "S", {"ssh_connection": "192.0.2.10 49152 198.51.100.20 22"})
+        self.assertNotIn("workspace", focus.recorded_focus("claude", "S"))
 
     def test_stale_records_are_ignored_and_storage_is_bounded(self):
         with patch.object(focus, "MAX_RECORDS", 2):

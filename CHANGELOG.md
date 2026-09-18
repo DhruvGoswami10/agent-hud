@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.1 — 2026-09-18
+
+- Return to the original cmux pane for remote Claude sessions over ordinary
+  SSH. Capture the Mac terminal through the existing SSH bootstrap hook and
+  recover connection metadata from already-running same-user Claude processes
+  on Linux, without restarting those sessions or forwarding environment values.
+- Use cmux's public navigation links from the standalone HUD. Its default
+  terminal-only control socket remains restricted; no new permission is needed.
+- Verify the complete live SSH connection, process start time, and terminal
+  before using a saved link. Refuse ambiguous shared/forwarded connections and
+  stale multiplexer environments. Keep at most 256 private local SSH links.
+- Use **Go to session** consistently. Sessions without a linked source show
+  a disabled button and **No linked window yet**.
+- Remove the notification ×. Clicking the popup still dismisses it when that
+  setting is enabled, and the accessible dismiss action remains available.
+  The hover behavior fixed in 0.3.0 is unchanged.
+- Mac and reporter versions advance to 0.3.1. Browser/Safari remain 0.3.0,
+  Watch remains 0.2.0, and the event protocol remains version 2.
+
 ## 0.3.0 — 2026-09-18
 
 - Hover works again after dismissing a notification: a deliberate move back

@@ -10,7 +10,7 @@ final class SessionFocusTests: XCTestCase {
         let url = "warp://session/a1459d36966644b4bd6db27a5f97b0d9"
         let focus = SessionFocus(json: ["warp_url": url])
         XCTAssertEqual(focus.warpURL, url)
-        XCTAssertEqual(focus.actionTitle(app: "codex"), "Open session")
+        XCTAssertEqual(focus.actionTitle, "Go to session")
         for invalid in ["warp://action/new_tab?path=/tmp", url + "?command=test", "warp://session/not-a-uuid",
                         "https://example.com/", "warp://user@session/" + workspace] {
             XCTAssertTrue(SessionFocus(json: ["warp_url": invalid]).warpURL.isEmpty)
@@ -32,8 +32,30 @@ final class SessionFocusTests: XCTestCase {
         XCTAssertTrue(SessionFocus(json: ["tty": "/dev/ttys003\nanything"]).tty.isEmpty)
         XCTAssertTrue(SessionFocus(json: ["terminal_id": "not a session"]).terminalID.isEmpty)
         XCTAssertTrue(SessionFocus(json: ["application": "/tmp/arbitrary-app"]).application.isEmpty)
-        XCTAssertEqual(valid.actionTitle(app: "codex", local: false), "Open app",
-                       "a remote TTY cannot select a local terminal tab")
+        XCTAssertEqual(valid.actionTitle, "Go to session")
+    }
+
+    func testCmuxUsesItsPublicNavigationLinkFromStandaloneApps() {
+        let focus = SessionFocus(json: ["workspace": workspace, "surface": surface])
+        XCTAssertEqual(focus.cmuxURL?.absoluteString, "cmux://workspace/" + workspace + "/surface/" + surface)
+        XCTAssertEqual(SessionFocus(json: ["workspace": workspace]).cmuxURL?.absoluteString,
+                       "cmux://workspace/" + workspace)
+        XCTAssertNil(SessionFocus(json: ["workspace": "../../anything"]).cmuxURL)
+    }
+
+    func testRemoteSSHConnectionIsNavigableAndSurvivesSparseRefreshes() {
+        let connection = "192.0.2.10 49152 198.51.100.20 22"
+        let focus = SessionFocus(json: ["ssh_connection": connection])
+        XCTAssertTrue(focus.hasLocation)
+        XCTAssertTrue(focus.canJumpBack(app: "claude", local: false))
+        XCTAssertEqual(focus.merging(SessionFocus(cwd: "/tmp/project")).sshConnection, connection)
+        let oldPane = SessionFocus(json: ["workspace": workspace, "surface": surface])
+        XCTAssertTrue(oldPane.merging(focus).workspace.isEmpty,
+                      "a different SSH connection must not retain an old pane")
+        for invalid in ["host 22 server 22", "192.0.2.10 99999 198.51.100.20 22", "$(command)"] {
+            XCTAssertTrue(SessionFocus(json: ["ssh_connection": invalid]).sshConnection.isEmpty)
+        }
+        XCTAssertFalse(SessionFocus(cwd: "/remote/path").canJumpBack(app: "claude", local: false))
     }
 
     func testAChangedBrowserClientDoesNotReuseAnOldTabNumber() {

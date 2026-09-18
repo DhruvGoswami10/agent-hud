@@ -29,9 +29,10 @@ location to return to the work.
 
 <p align="center"><img src="assets/notch.gif" alt="Agent activity beside the MacBook notch" width="760"></p>
 
-**Version 0.3.0** restores responsive hover after dismissing a popup and returns
-you to recorded terminal panes and browser conversations. It includes the
-notification and permission fixes from 0.2.2. See [CHANGELOG.md](CHANGELOG.md)
+**Version 0.3.1** links remote Claude sessions back to their originating SSH
+pane and uses **Go to session** throughout the panel. Notification popups no
+longer show an ×; click the popup to dismiss it. It includes the responsive
+hover and notification fixes from earlier releases. See [CHANGELOG.md](CHANGELOG.md)
 and the [audit resolution notes](docs/reliability-release.md).
 
 ## Install
@@ -130,23 +131,28 @@ leaving the pointer still keeps the popup dismissed.
 
 | Source | Where the session button takes you |
 | --- | --- |
-| cmux | Recorded workspace and pane, including a local pane hosting SSH |
+| cmux | Recorded workspace and pane through cmux's native navigation link, including a linked local pane hosting SSH |
 | Warp | Original pane via `WARP_FOCUS_URL` on supported Warp versions |
 | Terminal / iTerm2 | Recorded local tab or pane; macOS Automation access may be requested on the first click |
 | ChatGPT / Claude web | Existing conversation tab and window through the paired 0.3.0 bridge; a closed tab reopens its conversation link |
 | Cursor | Local workspace folder |
 | Other terminals | Recorded app, when the integration can identify it |
 
-**Open app** means no supported exact locator was supplied. Older sessions gain
-a location on their next hooked agent turn. A remote filesystem path or TTY
-cannot identify a local SSH tab: the hook must receive the local cmux IDs or
-Warp focus URL. An unavailable browser bridge falls back to the conversation
-link; a failed command keeps an explicit link button visible.
+**Go to session** uses the exact pane, tab, or conversation when available;
+sources that only identify their app open that app. The button is disabled with
+**No linked window yet** when neither is available. Remote Claude sessions can
+recover their SSH connection identity without restarting the agent. The Mac's
+SSH hook links that connection to its original terminal; see
+[SSH session navigation](docs/remote-setup.md#return-to-the-original-ssh-pane).
+An unavailable browser bridge falls back to the conversation link; a failed
+command keeps an explicit link button visible.
 
 Hook locations survive reporter refreshes and app restarts. They are kept in
 private `session-focus/` files under the Mac's AgentHUD Application Support
 directory (or `~/.cache/agent-hud/` remotely), capped at 256 entries and expired
-after 24 hours. The uninstall script removes these location records.
+after 24 hours. SSH terminal links use a separate private `ssh-links/` directory,
+also capped at 256 entries; navigation verifies the live connection, process
+start time, and terminal before using a link. The uninstall script removes both.
 
 On displays without a notch, choose either edge, drag the grip, or use the height
 slider. Placement is clamped to the visible screen. Try `make playground-edge`

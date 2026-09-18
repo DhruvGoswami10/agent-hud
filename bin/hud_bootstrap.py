@@ -14,7 +14,7 @@ sys.path.insert(0, str(BIN))
 from hud_config import atomic_write
 
 FILES = ('agent-hud-send', 'agent-hud-payload.py', 'agent-hud-registry',
-         'install-hooks.py', 'hud_config.py', 'hud_focus.py', 'agent-hud-codex', 'agent-hud-cursor')
+         'install-hooks.py', 'hud_config.py', 'hud_focus.py', 'hud_ssh_focus.py', 'agent-hud-codex', 'agent-hud-cursor')
 OPTIONS = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'PermitLocalCommand=no',
            '-o', 'ClearAllForwardings=yes']
 # The upload manifest contains the filename too. Match an executable path,
@@ -51,6 +51,9 @@ def main():
     if not conf.exists() or not any(fnmatch.fnmatchcase(host, p.strip()) for p in conf.read_text().splitlines()
                                    if p.strip() and not p.lstrip().startswith('#')):
         raise SystemExit('Host is not listed in hosts.conf')
+    if sys.platform == 'darwin':
+        from hud_ssh_focus import capture_sources
+        capture_sources()  # LocalCommand retains its terminal, even when backgrounded.
     version = digest()
     import shlex
     probe = ssh(host, 'cat "$HOME/agent-hud/.reporter-sha256" 2>/dev/null; pgrep -u "$(id -u)" -f ' + shlex.quote(REPORTER_PATTERN) + ' >/dev/null')
