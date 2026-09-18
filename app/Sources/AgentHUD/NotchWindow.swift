@@ -89,7 +89,7 @@ final class NotchWindowController {
         panel.contentView = hosting
         panel.ignoresMouseEvents = true
         state.frameUpdater = { _ in }  // sizes are view-driven now
-        state.dismissHandler = { [weak self] in self?.hoverGate.suppressUntilExit() }
+        state.dismissHandler = { [weak self] in self?.suppressHoverUntilExit() }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.screensChanged() }
@@ -100,6 +100,10 @@ final class NotchWindowController {
         state.$edgePlacement.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.screensChanged() }.store(in: &subscriptions)
         // Moving the notch only moves the canvas; the view inside is untouched.
         state.$edgeAnchor.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.fixFrame() }.store(in: &subscriptions)
+        state.$hudState.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] target in
+            // A dismissed peripheral must give keyboard focus back too.
+            if target.isCollapsed, self?.panel.isKeyWindow == true { self?.panel.resignKey() }
+        }.store(in: &subscriptions)
         fixFrame()
         panel.orderFrontRegardless()
         startMouseTracking()
@@ -167,6 +171,18 @@ final class NotchWindowController {
     private func hoverRect(_ sz: NSSize, on screen: NSScreen, margin: CGFloat) -> NSRect {
         Self.anchorRect(for: sz, screen: metrics.edge == nil ? screen.frame : screen.visibleFrame, metrics: metrics, anchor: state.edgeAnchor)
             .insetBy(dx: -margin, dy: -margin)
+    }
+
+    private func suppressHoverUntilExit() {
+        guard let screen = Self.targetScreen() else { hoverGate.suppressUntilExit(); return }
+        let size = Self.contentSize(for: state.hudState, metrics: metrics,
+                                   aggregate: state.aggregate, sideBars: state.sideBars,
+                                   peekPreview: state.peekPreviewSize,
+                                   idleIndicator: state.alwaysShowIndicator,
+                                   edgeBar: state.edgeGripBar)
+        // Keep the pre-dismissal bounds: shrinking the panel underneath a
+        // stationary pointer is not the same as the pointer leaving it.
+        hoverGate.suppressUntilExit(within: hoverRect(size, on: screen, margin: Self.exitMargin))
     }
 
     fileprivate func pollMouse() {

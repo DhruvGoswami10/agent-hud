@@ -8,7 +8,7 @@
 - Mute All Alerts retracts the current slide-out and suppresses subsequent
   agent, clipboard and music slide-outs while preserving session activity.
 - Turning off system banners immediately clears the permission warning.
-- Four interaction regressions reproduce the previous failures and pass with
+- Five interaction regressions reproduce the previous failures and pass with
   the fixes. Browser, reporter, Safari and Watch components remain at 0.2.0.
 
 ## 0.2.0 — 2026-09-18

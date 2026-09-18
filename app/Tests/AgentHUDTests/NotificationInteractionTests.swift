@@ -47,4 +47,18 @@ final class NotificationInteractionTests: XCTestCase {
         XCTAssertEqual(gate.update(point: p, inside: true), true,
                        "hover-to-open resumes after leaving and returning")
     }
+
+    func testShrinkingThePanelDoesNotCountAsThePointerLeaving() {
+        var gate = HoverGate()
+        gate.suppressUntilExit(within: CGRect(x: 400, y: 0, width: 470, height: 112))
+        // Retraction moves the current bounds away from the stationary cursor.
+        XCTAssertNil(gate.update(point: CGPoint(x: 600, y: 70), inside: false))
+        // Moving back toward the notch is still within the dismissed slide-out.
+        XCTAssertNil(gate.update(point: CGPoint(x: 600, y: 15), inside: true))
+        XCTAssertNil(gate.update(point: CGPoint(x: 600, y: 15), inside: true))
+        XCTAssertFalse(gate.engaged)
+        _ = gate.update(point: CGPoint(x: 600, y: 200), inside: false)
+        XCTAssertNil(gate.update(point: CGPoint(x: 600, y: 15), inside: true))
+        XCTAssertEqual(gate.update(point: CGPoint(x: 600, y: 15), inside: true), true)
+    }
 }

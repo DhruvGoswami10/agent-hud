@@ -14,6 +14,7 @@ struct HoverGate {
     private var last: CGPoint?
     private(set) var engaged = false
     private var suppressed = false
+    private var suppressedRect: CGRect?
 
     init(dwellSamples: Int = 2, maxSpeed: CGFloat = 50) {
         self.dwellSamples = dwellSamples
@@ -22,8 +23,9 @@ struct HoverGate {
 
     /// A click can arrive before the dwell threshold. Do not let the next
     /// sample reopen the notification while the pointer is still over it.
-    mutating func suppressUntilExit() {
+    mutating func suppressUntilExit(within rect: CGRect? = nil) {
         suppressed = true
+        suppressedRect = rect
         engaged = false
         samples = 0
     }
@@ -34,7 +36,10 @@ struct HoverGate {
         let delta = last.map { hypot(point.x - $0.x, point.y - $0.y) } ?? .greatestFiniteMagnitude
         last = point
         if suppressed {
-            if !inside { suppressed = false }
+            if !(suppressedRect?.contains(point) ?? inside) {
+                suppressed = false
+                suppressedRect = nil
+            }
             return nil
         }
         guard inside else {
