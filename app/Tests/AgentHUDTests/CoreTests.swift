@@ -132,14 +132,16 @@ final class SessionModelTests: XCTestCase {
     }
 
     func testStandardContextWindow() {
-        let s = session(ctx: 100_000)
+        var s = session(ctx: 100_000)
+        s.ctxLimit = 200_000
         XCTAssertEqual(s.effectiveCtxLimit, 200_000)
         XCTAssertEqual(s.ctxFraction ?? 0, 0.5, accuracy: 0.01)
     }
 
     /// [1m] sessions blow past 200k; the bar must not pin at 100%.
-    func testLargeContextWindowIsInferred() {
-        let s = session(ctx: 337_000)
+    func testLargeContextWindowUsesReportedCapacity() {
+        var s = session(ctx: 337_000)
+        s.ctxLimit = 1_000_000
         XCTAssertEqual(s.effectiveCtxLimit, 1_000_000)
         XCTAssertLessThan(s.ctxFraction ?? 1, 0.5)
     }

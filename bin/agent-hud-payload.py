@@ -144,7 +144,7 @@ def main():
             kind = "info"
 
     transcript = d.get("transcript_path")
-    msg, title = "", ""
+    msg, title, outcome = "", "", ""
     if ev == "Stop":
         msg, title, outcome = scan_transcript(transcript)
         msg = msg[:300]
@@ -167,9 +167,13 @@ def main():
 
     cwd = d.get("cwd") or os.getcwd()
     out = {
-        "v": 1,
+        "v": 2,
+        "app": "claude",
+        "outcome": outcome,
+        "focus": {"workspace": os.environ.get("CMUX_WORKSPACE_ID", ""),
+                  "surface": os.environ.get("CMUX_SURFACE_ID", "")},
         "event": kind,
-        "host": socket.gethostname().split(".")[0],
+        "host": os.environ.get("AGENT_HUD_HOST") or socket.gethostname().split(".")[0],
         "project": os.path.basename(cwd.rstrip("/")) or cwd,
         "cwd": cwd,
         "session_id": d.get("session_id", ""),

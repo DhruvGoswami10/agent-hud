@@ -19,7 +19,7 @@ final class NotchPanel: NSPanel {
         isReleasedWhenClosed = false
     }
 
-    override var canBecomeKey: Bool { false }
+    override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
 
@@ -89,10 +89,10 @@ final class NotchWindowController {
         }
         // Edge preferences change the placement the same way plugging a
         // display in does.
-        state.$edgeSide.dropFirst().sink { [weak self] _ in self?.screensChanged() }.store(in: &subscriptions)
-        state.$edgePlacement.dropFirst().sink { [weak self] _ in self?.screensChanged() }.store(in: &subscriptions)
+        state.$edgeSide.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.screensChanged() }.store(in: &subscriptions)
+        state.$edgePlacement.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.screensChanged() }.store(in: &subscriptions)
         // Moving the notch only moves the canvas; the view inside is untouched.
-        state.$edgeAnchor.dropFirst().sink { [weak self] _ in self?.fixFrame() }.store(in: &subscriptions)
+        state.$edgeAnchor.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.fixFrame() }.store(in: &subscriptions)
         fixFrame()
         panel.orderFrontRegardless()
         startMouseTracking()
@@ -115,7 +115,7 @@ final class NotchWindowController {
     private func fixFrame() {
         guard let screen = Self.targetScreen() else { return }
         let canvas = NSSize(width: Self.canvasWidth, height: Self.canvasHeight)
-        panel.setFrame(Self.anchorRect(for: canvas, screen: screen.frame, metrics: metrics,
+        panel.setFrame(Self.anchorRect(for: canvas, screen: metrics.edge == nil ? screen.frame : screen.visibleFrame, metrics: metrics,
                                        anchor: state.edgeAnchor), display: true)
     }
 
@@ -144,7 +144,11 @@ final class NotchWindowController {
                                        dropY: CGFloat = Playground.dropY,
                                        offsetX: CGFloat = Playground.offsetX) -> NSRect {
         if let edge = m.edge {
-            let centerY = frame.maxY - frame.height * CGFloat(anchor) - dropY
+            // Use one clamped canvas centre for every stage, including hover
+            // hit testing. Opening cannot move the content away from the grip.
+            let half = min(canvasHeight, frame.height) / 2
+            let requested = frame.maxY - frame.height * CGFloat(anchor) - dropY
+            let centerY = min(frame.maxY - half, max(frame.minY + half, requested))
             let x = edge == .right ? frame.maxX - size.width : frame.minX
             return NSRect(x: x, y: centerY - size.height / 2, width: size.width, height: size.height)
         }
@@ -154,7 +158,7 @@ final class NotchWindowController {
     }
 
     private func hoverRect(_ sz: NSSize, on screen: NSScreen, margin: CGFloat) -> NSRect {
-        Self.anchorRect(for: sz, screen: screen.frame, metrics: metrics, anchor: state.edgeAnchor)
+        Self.anchorRect(for: sz, screen: metrics.edge == nil ? screen.frame : screen.visibleFrame, metrics: metrics, anchor: state.edgeAnchor)
             .insetBy(dx: -margin, dy: -margin)
     }
 

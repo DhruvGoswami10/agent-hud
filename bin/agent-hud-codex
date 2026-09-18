@@ -1,18 +1,8 @@
 #!/usr/bin/env python3
-"""Forward Codex turn-end notifications to Agent HUD, then hand off.
+"""Observe Codex notify (argv) and lifecycle hooks (stdin); never decide approvals.
 
-Codex has two integration points and cmux has already taken one of them: it
-launches `codex --enable hooks` with `-c hooks.Stop=…` and friends on the
-command line, which overrides anything the config file sets for those events.
-So hooks are not ours to claim inside cmux.
-
-`notify` is the other one, and cmux leaves it alone. It fires once per turn
-with a JSON argument. The catch is that it holds a single program, and yours
-is already pointed at Codex Computer Use — so this script forwards the event
-and then execs whatever was there before, with the same arguments. Nothing
-that worked stops working.
-
-Wire it up with:  python3 bin/install-hooks.py --codex
+The previous notify command is chained only for notify invocations. Optional
+hooks provide running/attention/interrupted states and require Codex hook trust.
 """
 import json
 import os
@@ -24,7 +14,8 @@ import urllib.request
 URL = os.environ.get("AGENT_HUD_URL", "http://127.0.0.1:48085")
 HOST = os.environ.get("AGENT_HUD_HOST") or socket.gethostname().split(".")[0]
 # Written by the installer: the notify program we displaced, argv and all.
-CHAIN = os.path.expanduser("~/.codex/agent-hud-chain.json")
+CHAIN = os.path.join(os.environ.get("AGENT_HUD_CODEX_DIR", os.path.expanduser("~/.codex")),
+                     "agent-hud-chain.json")
 
 
 def post(body):
@@ -57,7 +48,7 @@ def handoff(argv):
             original = json.load(f)
     except Exception:
         return
-    if not original:
+    if not isinstance(original, list) or not original or not all(isinstance(x, str) for x in original):
         return
     try:
         subprocess.run(list(original) + argv, timeout=20, check=False)
@@ -68,26 +59,59 @@ def handoff(argv):
 def main():
     argv = sys.argv[1:]
     d = payload(argv)
-    kind = d.get("type") or ""
-
-    # agent-turn-complete is the one worth reporting; anything else Codex adds
-    # later stays silent rather than guessing at what it means.
-    if kind in ("agent-turn-complete", "turn-ended", "agent-turn-completed"):
-        msg = (d.get("last-assistant-message") or d.get("last_assistant_message") or "").strip()
+    is_notify = bool(d)
+    if not is_notify and not sys.stdin.isatty():
+        try:
+            d = json.loads(sys.stdin.read(1_048_576))
+        except (ValueError, OSError):
+            d = {}
+    if not isinstance(d, dict):
+        d = {}
+    hook = d.get("hook_event_name") or ""
+    event = {"SessionStart": "info", "UserPromptSubmit": "running",
+             "PermissionRequest": "attention", "Stop": "done",
+             "Interrupt": "done", "SessionEnd": "done"}.get(hook)
+    outcome = {"Stop": "finished", "Interrupt": "interrupted", "SessionEnd": "unknown"}.get(hook, "")
+    if is_notify and d.get("type") in ("agent-turn-complete", "turn-ended", "agent-turn-completed"):
+        event, outcome = "done", "finished"
+    sid = d.get("thread-id") or d.get("thread_id") or d.get("session_id")
+    # Turn IDs and folder names are not conversation IDs. Internal helper
+    # notifications without a thread must not create phantom session cards.
+    if event and isinstance(sid, str) and sid:
+        msg = str(d.get("last-assistant-message") or d.get("last_assistant_message")
+                  or d.get("prompt") or "").strip()
+        # Codex's title helper can publish a one-field structured response.
+        # Suppress that exact internal shape, not arbitrary JSON answers.
+        try:
+            title_response = json.loads(msg)
+        except (ValueError, TypeError):
+            title_response = None
+        if isinstance(title_response, dict) and set(title_response) == {"title"}:
+            event = None
         cwd = d.get("cwd") or os.getcwd()
         project = os.path.basename(cwd.rstrip("/")) or "codex"
-        post({
-            "event": "done",
+        body = {
+            "event": event,
             "host": HOST,
             "app": "codex",
             "project": project,
-            "session_id": d.get("turn-id") or d.get("thread-id") or d.get("session_id") or project,
-            "session_name": project,
-            "message": msg[:300] or "turn finished",
-            "hook": "notify",
-        })
-
-    handoff(argv)
+            "cwd": cwd,
+            "session_id": sid,
+            "session_name": "",  # the registry's prompt-derived title wins
+            "message": msg[:300] or {"attention": "permission requested", "running": "working",
+                                      "info": "session opened"}.get(event, outcome or "session ended"),
+            "outcome": outcome,
+            "model": d.get("model") or "",
+            "hook": hook or "notify",
+            "focus": {"workspace": os.environ.get("CMUX_WORKSPACE_ID", ""),
+                      "surface": os.environ.get("CMUX_SURFACE_ID", "")},
+        }
+        if event:
+            post(body)
+    if is_notify:
+        handoff(argv)
+    else:
+        print("{}")
 
 
 if __name__ == "__main__":

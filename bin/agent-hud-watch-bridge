@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Opt-in, TLS-pinned, token-authenticated, read-only Watch snapshot relay.
+
+Never exposes the event/control/clipboard/debug endpoints to the LAN. The
+loopback server stays on 127.0.0.1. Pairing material is handed to the Mac app
+through stdout only with --prepare; it is never served over the network.
+"""
+import argparse
+import hashlib
+import hmac
+import http.server
+import json
+import os
+from pathlib import Path
+import secrets
+import socket
+import ssl
+import subprocess
+import threading
+import urllib.error
+import urllib.parse
+import urllib.request
+
+
+def prepare(directory, host=None, port=48087):
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    cert, key = directory / 'watch-cert.pem', directory / 'watch-key.pem'
+    config = directory / 'watch-pairing.json'
+    if not cert.exists() or not key.exists():
+        subprocess.run(['/usr/bin/openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+                        '-keyout', str(key), '-out', str(cert), '-days', '3650',
+                        '-subj', '/CN=Agent HUD Watch', '-sha256'], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=15)
+        key.chmod(0o600)
+        cert.chmod(0o600)
+    fingerprint = hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.read_text())).hexdigest()
+    data = json.loads(config.read_text()) if config.exists() else {'token': secrets.token_hex(32)}
+    if not host:
+        try:
+            name = subprocess.check_output(['/usr/sbin/scutil', '--get', 'LocalHostName'],
+                                           timeout=2, text=True).strip()
+            host = name + '.local'
+        except (OSError, subprocess.SubprocessError):
+            host = socket.gethostname()
+    data.update(host=host, port=port, pin=fingerprint)
+    data['link'] = 'agenthud://pair?' + urllib.parse.urlencode(
+        {k: data[k] for k in ('host', 'port', 'token', 'pin')})
+    tmp = config.with_suffix('.tmp')
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        json.dump(data, f)
+    os.replace(tmp, config)
+    config.chmod(0o600)
+    return data
+
+
+class WatchServer(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, address, directory, token, local_port=48085):
+        self.token = token
+        self.local_port = local_port
+        self.slots = threading.BoundedSemaphore(8)
+        self.tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        self.tls.minimum_version = ssl.TLSVersion.TLSv1_2
+        self.tls.load_cert_chain(str(Path(directory) / 'watch-cert.pem'), str(Path(directory) / 'watch-key.pem'))
+        super().__init__(address, WatchHandler)
+
+    def process_request(self, request, address):
+        if not self.slots.acquire(blocking=False):
+            request.close()
+            return
+        super().process_request(request, address)
+
+    def process_request_thread(self, request, address):
+        try:
+            request.settimeout(4)
+            request = self.tls.wrap_socket(request, server_side=True)
+            super().process_request_thread(request, address)
+        except (OSError, ssl.SSLError):
+            request.close()
+        finally:
+            self.slots.release()
+
+
+class WatchHandler(http.server.BaseHTTPRequestHandler):
+    server_version = 'AgentHUDWatch/2'
+
+    def log_message(self, *_):
+        pass  # no addresses, credentials or session contents in logs
+
+    def reply(self, status, body):
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Connection', 'close')
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if not hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + self.server.token):
+            self.reply(401, b'{"error":"pairing required"}')
+            return
+        if self.path != '/watch':
+            self.reply(404, b'{"error":"snapshot endpoint only"}')
+            return
+        try:
+            with urllib.request.urlopen('http://127.0.0.1:%d/watch' % self.server.local_port, timeout=2) as r:
+                body = r.read(262145)
+            if len(body) > 262144:
+                raise ValueError('snapshot too large')
+            json.loads(body)  # never forward an HTML/error page
+            self.reply(200, body)
+        except (OSError, ValueError, urllib.error.URLError):
+            self.reply(503, b'{"error":"Mac snapshot unavailable"}')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--directory', required=True)
+    parser.add_argument('--host')
+    parser.add_argument('--port', type=int, default=48087)
+    parser.add_argument('--local-port', type=int, default=48085)
+    parser.add_argument('--prepare', action='store_true')
+    args = parser.parse_args()
+    pairing = prepare(args.directory, args.host, args.port)
+    if args.prepare:
+        print(json.dumps(pairing))
+    else:
+        WatchServer(('0.0.0.0', args.port), args.directory, pairing['token'], args.local_port).serve_forever()
+
+
+if __name__ == '__main__':
+    main()

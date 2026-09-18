@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var state: AppState!
     private var server: EventServer!
@@ -44,7 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         statusItemController = StatusItemController(state: state)
         SettingsWindowController.shared = SettingsWindowController(state: state)
-        Notifier.shared.setup()
+        if !Playground.on { Notifier.shared.setup() }
         // Ask once shortly after launch too: the authorization callback can
         // land before the delegate is ready, and a permission revoked in
         // System Settings must show up without a relaunch.
@@ -79,7 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             clipboardWatcher.start()
         }
         musicWatcher = MusicWatcher(state: state)
-        musicWatcher.start()
+        if !Playground.noReporter { musicWatcher.start() }
         startLocalRegistryReporter()
         HostAliases.reload()
         aliasTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { _ in
@@ -123,9 +124,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         server.onMusicCommand = { cmd, tab in
             Task { @MainActor in state.externalMusicCommand(cmd, tab: tab) }
         }
+        server.browserToken = SupportPaths.browserToken()
+        server.onStatus = { value in Task { @MainActor in state.listenerStatus = value } }
         do {
             try server.start()
+            WatchBridge.shared.start()
         } catch {
+            state.listenerStatus = "failed: \(error)"
             NSLog("AgentHUD: failed to start event server on \(Playground.port): \(String(describing: error))")
         }
     }
@@ -135,6 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         registryReporter?.terminationHandler = nil
         registryReporter?.terminate()
         server?.stop()
+        WatchBridge.shared.stop(terminating: true)
     }
 
     /// The same python reporter used on remote boxes also feeds local sessions —
@@ -143,19 +149,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startLocalRegistryReporter() {
         // Screenshots for the README are fed synthetic sessions on purpose —
         // the real ones carry private project names and internal hostnames.
-        if Playground.noReporter { return }
-        if !Playground.on {
-            // Only the real instance may reap stray reporters — the playground
-            // sharing this would kill the live app's feed.
-            let kill = Process()
-            kill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-            kill.arguments = ["-f", "[a]gent-hud-registry"]
-            try? kill.run()
-            kill.waitUntilExit()
-        }
-
-        let path = ("~/agent-hud/bin/agent-hud-registry" as NSString).expandingTildeInPath
+        if Playground.noReporter { state.reporterStatus = "disabled for playground"; return }
+        let path = SupportPaths.bin.appendingPathComponent("agent-hud-registry").path
         guard FileManager.default.isExecutableFile(atPath: path) else {
+            state.reporterStatus = "missing reporter"
             NSLog("AgentHUD: registry reporter missing at \(path)")
             return
         }
@@ -170,11 +167,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         p.environment = env
         p.standardInput = FileHandle.nullDevice
         p.standardOutput = FileHandle.nullDevice
-        p.standardError = FileHandle.nullDevice
+        let errors = Pipe()
+        p.standardError = errors
+        errors.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            if data.isEmpty { handle.readabilityHandler = nil; return }
+            let message = String(decoding: data.suffix(1000), as: UTF8.self)
+            Task { @MainActor in self?.state.reporterProblem = message }
+        }
         p.terminationHandler = { [weak self] _ in
             // A dead reporter silently freezes local sessions; relaunch it.
             Task { @MainActor in
                 guard let self, !self.terminating else { return }
+                self.state.reporterStatus = "stopped; retrying"
                 NSLog("AgentHUD: local registry reporter died; relaunching in 5s")
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 guard !self.terminating else { return }
@@ -184,7 +189,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try p.run()
             registryReporter = p
+            state.reporterStatus = "running"
         } catch {
+            state.reporterStatus = "failed to start"
             NSLog("AgentHUD: failed to start registry reporter: \(String(describing: error))")
         }
     }
@@ -194,6 +201,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor private var delegateRef: AppDelegate?
 
 MainActor.assumeIsolated {
+    if CommandLine.arguments.contains("--unregister-login-item") {
+        if let error = LoginItem.set(false) { fputs(error + "\n", stderr); exit(1) }
+        exit(0)
+    }
     let app = NSApplication.shared
     let delegate = AppDelegate()
     delegateRef = delegate

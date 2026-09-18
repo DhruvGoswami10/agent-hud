@@ -1,21 +1,26 @@
 APP := dist/AgentHUD.app
 BIN := app/.build/release/AgentHUD
+SWIFT_FLAGS ?= -Xswiftc -warnings-as-errors
 # Stamped into the bundle so the app can answer "what am I running" — the
 # update check has nothing to compare against otherwise.
-VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: build bundle run playground preview hooks hooks-cursor test clean uninstall update
+.PHONY: build bundle run playground playground-edge demo preview hooks hooks-cursor hooks-codex watch test clean uninstall update
 
 build:
-	cd app && swift build -c release
+	cd app && swift build -c release $(SWIFT_FLAGS)
 
 bundle: build
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp $(BIN) $(APP)/Contents/MacOS/AgentHUD
 	cp app/Info.plist $(APP)/Contents/Info.plist
+	cp -R bin $(APP)/Contents/Resources/bin
+	find $(APP)/Contents/Resources/bin -name __pycache__ -type d -prune -exec rm -rf {} +
 	/usr/libexec/PlistBuddy -c "Add :AgentHUDVersion string $(VERSION)" $(APP)/Contents/Info.plist >/dev/null 2>&1 \
 	  || /usr/libexec/PlistBuddy -c "Set :AgentHUDVersion $(VERSION)" $(APP)/Contents/Info.plist
+	/usr/libexec/PlistBuddy -c "Add :AgentHUDCommit string $(COMMIT)" $(APP)/Contents/Info.plist
 	codesign --force --sign - $(APP)
 
 # A sandboxed copy to try things in: separate bundle id (so macOS lets both
@@ -82,7 +87,7 @@ hooks-cursor:
 # pacing policy (node). Run before pushing.
 test:
 	cd app && swift test
-	python3 tests/test_scripts.py
+	python3 -m unittest discover -s tests -p 'test_*.py'
 	node tests/test_extension.mjs
 
 clean:
@@ -96,3 +101,11 @@ update:
 # Remove the app, LaunchAgents, hooks and caches from this Mac (repo stays).
 uninstall:
 	bash bin/agent-hud-uninstall
+
+# Optional richer Codex lifecycle hooks require review in Codex /hooks.
+hooks-codex:
+	python3 bin/install-hooks.py --codex --with-hooks
+
+watch:
+	xcodegen generate --spec watch/project.yml
+	xcodebuild -project watch/AgentHUDWatch.xcodeproj -scheme AgentHUDWatch -sdk watchsimulator -configuration Release -derivedDataPath watch/build CODE_SIGNING_ALLOWED=NO build

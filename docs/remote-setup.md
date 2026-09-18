@@ -1,60 +1,71 @@
-# Remote machines (SSH'd VMs → Mac notch)
+# Remote reporters and SSH tunnels
 
-List your boxes in `~/agent-hud/hosts.conf` (one IP/host or shell pattern per
-line; the file is gitignored). The tunnel keeper and auto-bootstrap read it.
-For a new box:
+The Mac’s event/control API remains loopback-only. Use a reverse SSH tunnel;
+do not expose port 48085 on a public or local-network interface.
 
-## 1. Install the forwarder on the box
+## Configure hosts
+
+Put one SSH host alias/IP per line in `hosts.conf` in the checkout, or in
+`~/Library/Application Support/AgentHUD/`. Comments start with `#`. Bootstrap
+also accepts shell patterns in this file; the persistent keeper uses explicit
+host entries only. `AGENT_HUD_ROOT` selects a different configuration root.
+These files are private and gitignored.
+
+## Install or update a reporter
+
+From the Mac checkout (or the downloaded app’s `Contents/Resources/bin`):
 
 ```sh
-ssh <box> 'mkdir -p ~/agent-hud/bin'
-scp bin/agent-hud-send bin/agent-hud-payload.py bin/install-hooks.py <box>:agent-hud/bin/
-ssh <box> 'chmod +x ~/agent-hud/bin/* && python3 ~/agent-hud/bin/install-hooks.py ~/agent-hud/bin/agent-hud-send'
+bin/agent-hud-bootstrap my-dev-box
 ```
 
-The installer backs up `~/.claude/settings.json` and appends hooks additively.
-Claude Code sessions already running on the box pick the hooks up after a
-restart; new sessions report immediately.
+The host must be configured and reachable through batch-mode SSH. Python 3.9+
+and `pgrep`/`pkill` are required remotely. Bootstrap compares content checksums,
+verifies the upload, installs scripts atomically, preserves existing Claude hooks,
+and restarts same-user HUD reporters. Agent sessions are not restarted. Repeat
+this command after each HUD release; a healthy old reporter is still updated.
+Codex rollouts are included automatically. To install its optional hooks remotely:
 
-## 2. Carry the events home
-
-`~/.ssh/config` on the Mac:
-
+```sh
+ssh my-dev-box 'python3 ~/agent-hud/bin/install-hooks.py --codex --with-hooks'
 ```
-Host <box-ip-or-alias>
+
+Restart existing agent sessions and review Codex hooks with `/hooks` as needed.
+
+## Carry reports home
+
+In the Mac’s `~/.ssh/config`:
+
+```sshconfig
+Host my-dev-box
     RemoteForward 48085 127.0.0.1:48085
 ```
 
-Any interactive SSH session you have open to the box now doubles as the event
-tunnel. Notes:
+An interactive connection then carries reports to the Mac. For persistent
+connections, run `bin/agent-hud-tunnels` through your LaunchAgent. It probes the
+forward, creates a tunnel only when needed, and stops only children it owns.
+It uses SSH server-alive checks to recover after network changes. Existing
+interactive tunnels can coexist; only one connection binds the remote port.
 
-- Only one session can hold the remote port; extra sessions print
-  `Warning: remote port forwarding failed for listen port 48085` — benign.
-- If you close every SSH session to the box, events stop until you reconnect
-  (hooks fail silently; agents are never blocked). For an always-on tunnel run:
-  `ssh -N -R 48085:127.0.0.1:48085 <box>` under autossh/launchd.
-- No SSH at all? Point the box's hooks straight at the Mac if routable:
-  `AGENT_HUD_URL=http://<mac-ip>:48085` in the environment Claude runs in
-  (requires changing the app to bind non-loopback — not enabled by default).
-
-## 3. Live session registry reporter
-
-Hooks only fire on turn boundaries; for the live SESSIONS list (names + status,
-no session restart needed) each box also runs a reporter that streams
-`~/.claude/sessions` snapshots to `POST /sessions` every 5s:
+## Check health
 
 ```sh
-ssh <box> 'nohup ./agent-hud/bin/agent-hud-registry </dev/null >/dev/null 2>&1 &'
+ssh my-dev-box 'curl -fsS --max-time 3 http://127.0.0.1:48085/health'
 ```
 
-Gotchas learned the hard way: keep `</dev/null` (otherwise the process pins the
-SSH session open and dies with it), and never `pkill -f` it in a command line
-that also contains the script path — the pattern matches the invoking shell and
-kills the connection. Use `pkill -f "[a]gent-hud-registry"` in its own ssh call.
+Mac Settings → Connections lists reporter versions; `/debug` includes heartbeat
+ages. Debug output contains private session information. Reporter startup errors
+are retained in `~/agent-hud/reporter.log` on the remote host. If a host disappears,
+its cards become unavailable and its aggregate usage is removed after the grace
+period; silence is not reported as successful completion.
 
-## 4. Test
+## Remove remote integration
+
+Run these as separate commands on that host:
 
 ```sh
-ssh <box> 'printf %s "{\"hook_event_name\":\"Notification\",\"session_id\":\"t\",\"cwd\":\"$HOME\",\"message\":\"tunnel test\"}" | ~/agent-hud/bin/agent-hud-send'
-curl -s http://127.0.0.1:48085/health   # received count should bump
+pkill -u "$(id -u)" -f '[a]gent-hud-registry'
+python3 ~/agent-hud/bin/install-hooks.py --uninstall
 ```
+
+The uninstaller keeps transcripts, unrelated hooks, and backups.

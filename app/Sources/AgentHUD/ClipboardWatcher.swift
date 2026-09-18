@@ -39,7 +39,7 @@ final class ClipboardWatcher {
 
     /// What the pasteboard actually held, before any decoding — grabbed on the
     /// main thread (cheap), turned into a chip off it (not cheap).
-    fileprivate enum Payload {
+    enum Payload {
         case image(Data, NSPasteboard.PasteboardType)
         case files([URL])
         case text(String)
@@ -69,7 +69,7 @@ final class ClipboardWatcher {
         if let s = pb.string(forType: .string) {
             let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return nil }
-            return .text(trimmed)
+            return .text(s)
         }
         return nil
     }
@@ -84,7 +84,7 @@ final class ClipboardWatcher {
     nonisolated static let maxRetainedImageBytes = 8_000_000
     nonisolated static let maxRetainedTextLength = 128_000
 
-    private static func item(from payload: Payload) -> ClipboardItem? {
+    nonisolated static func item(from payload: Payload) -> ClipboardItem? {
         switch payload {
         case .image(let data, let type):
             guard let (cg, pxW, pxH) = downsample(data, maxDim: 320) else { return nil }
@@ -93,19 +93,21 @@ final class ClipboardWatcher {
             let retained = data.count <= maxRetainedImageBytes ? data : nil
             return ClipboardItem(kind: .image, text: dims, image: thumb,
                                  signature: clipboardSignature(kind: .image, text: dims, data: data),
-                                 imageData: retained, imageType: retained == nil ? "" : type.rawValue)
+                                 imageData: retained, imageType: retained == nil ? "" : type.rawValue,
+                                 isRestorable: retained != nil)
         case .files(let urls):
             let names = urls.map(\.lastPathComponent).joined(separator: ", ")
             return ClipboardItem(kind: .file, text: names, image: nil,
-                                 signature: clipboardSignature(kind: .file, text: names, data: nil),
+                                 signature: clipboardSignature(kind: .file, text: urls.map(\.absoluteString).joined(separator: "\n"), data: nil),
                                  fileURLs: urls)
-        case .text(let trimmed):
+        case .text(let original):
             // The chip shows a preview; the full string is kept so copying it
             // back doesn't silently truncate what you copied.
-            let text = String(trimmed.prefix(800))
+            let text = String(original.prefix(800))
+            let retained = original.count <= maxRetainedTextLength
             return ClipboardItem(kind: .text, text: text, image: nil,
-                                 signature: clipboardSignature(kind: .text, text: text, data: nil),
-                                 fullText: String(trimmed.prefix(maxRetainedTextLength)))
+                                 signature: clipboardSignature(kind: .text, text: original, data: nil),
+                                 fullText: retained ? original : "", isRestorable: retained)
         }
     }
 

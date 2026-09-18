@@ -11,6 +11,18 @@ final class AppState: ObservableObject {
     @Published private(set) var clipboard: [ClipboardItem] = []
     @Published private(set) var pendingAttention = 0
     @Published private(set) var eventsReceived = 0
+    @Published var listenerStatus = "starting"
+    @Published var reporterStatus = "starting"
+    @Published var reporterProblem = ""
+
+    func copyBrowserPairingKey() {
+        let token = SupportPaths.browserToken()
+        guard !token.isEmpty else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(token, forType: .string)
+        pb.setData(Data(), forType: .init("org.nspasteboard.ConcealedType"))
+    }
 
     @Published var systemNotifications: Bool { didSet { UserDefaults.standard.set(systemNotifications, forKey: "systemNotifications") } }
     @Published var sounds: Bool { didSet { UserDefaults.standard.set(sounds, forKey: "sounds") } }
@@ -95,7 +107,9 @@ final class AppState: ObservableObject {
         }
     }
     /// When a manual hold should end. nil = indefinite (the old behaviour).
-    @Published private(set) var keepAwakeUntil: Date?
+    @Published private(set) var keepAwakeUntil: Date? {
+        didSet { UserDefaults.standard.set(keepAwakeUntil, forKey: "keepAwakeUntil") }
+    }
     @Published var autoUpdateCheck: Bool { didSet { UserDefaults.standard.set(autoUpdateCheck, forKey: "autoUpdateCheck") } }
 
     /// Mirrors what the OS reports, refreshed after every change — the user
@@ -217,7 +231,8 @@ final class AppState: ObservableObject {
     /// /debug so the watch never has to parse the diagnostic firehose.
     func watchPayload() -> String {
         let sess = sessions.prefix(8).map { s -> [String: Any] in
-            ["name": sessionDisplayName(s.sessionName, project: s.project),
+            ["id": s.id, "outcome": s.outcome.rawValue,
+             "name": sessionDisplayName(s.sessionName, project: s.project),
              "host": Host.isLocal(s.host) ? "local" : HostAliases.display(s.host),
              "kind": s.kind.rawValue,
              "app": s.app,
@@ -234,7 +249,8 @@ final class AppState: ObservableObject {
         }
         let lims = accountLimits.flatMap { acct in
             acct.items.map { i -> [String: Any] in
-                ["label": i.label, "percent": i.percent, "plan": acct.plan,
+                ["id": acct.key + ":" + i.id, "account": acct.accountName, "provider": acct.provider.rawValue,
+                 "label": i.label, "percent": i.percent, "plan": acct.plan,
                  "resets": limitResetLabel(i.resetsAt)]
             }
         }
@@ -288,8 +304,14 @@ final class AppState: ObservableObject {
             }
         }
         if ok == KERN_SUCCESS { rss = Int(info.resident_size) }
-        let clipBytes = clipboard.reduce(0) { $0 + ($1.imageData?.count ?? 0) + $1.text.utf8.count }
+        let clipBytes = clipboard.reduce(0) { $0 + ($1.imageData?.count ?? 0) + $1.fullText.utf8.count + $1.text.utf8.count }
         return [
+            "version": Updater.current,
+            "commit": Bundle.main.object(forInfoDictionaryKey: "AgentHUDCommit") as? String ?? "development",
+            "protocol": 2,
+            "listener": listenerStatus,
+            "reporter": reporterStatus,
+            "reporterVersions": reporterVersions,
             "rssMB": rss / 1_048_576,
             "uptimeMin": Int(Date().timeIntervalSince(startedAt) / 60),
             "events": events.count,
@@ -314,7 +336,8 @@ final class AppState: ObservableObject {
              "hook": e.hook, "msg": String(e.message.prefix(80))]
         }
         let sess = sessions.map { s -> [String: String] in
-            ["name": sessionDisplayName(s.sessionName, project: s.project),
+            ["id": s.id, "outcome": s.outcome.rawValue,
+             "name": sessionDisplayName(s.sessionName, project: s.project),
              "host": s.host, "kind": s.kind.rawValue]
         }
         let hud: String
@@ -359,6 +382,10 @@ final class AppState: ObservableObject {
         return String(decoding: data, as: UTF8.self)
     }
 
+    func focusSession(_ session: SessionInfo) {
+        session.focus.open(app: session.app, local: Host.isLocal(session.host))
+    }
+
     func focusTerminal() {
         for bid in ["com.cmuxterm.app", "com.googlecode.iterm2", "com.apple.Terminal"] {
             if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bid).first {
@@ -374,31 +401,39 @@ final class AppState: ObservableObject {
 
     init() {
         let d = UserDefaults.standard
-        systemNotifications = d.object(forKey: "systemNotifications") as? Bool ?? true
-        sounds = d.object(forKey: "sounds") as? Bool ?? true
-        expandOnCopy = d.object(forKey: "expandOnCopy") as? Bool ?? true
-        sideBars = d.object(forKey: "sideBars") as? Bool ?? true
-        musicEnabled = d.object(forKey: "musicEnabled") as? Bool ?? true
+        systemNotifications = (d.object(forKey: "systemNotifications") == nil ? true : d.bool(forKey: "systemNotifications"))
+        sounds = (d.object(forKey: "sounds") == nil ? true : d.bool(forKey: "sounds"))
+        expandOnCopy = (d.object(forKey: "expandOnCopy") == nil ? true : d.bool(forKey: "expandOnCopy"))
+        sideBars = (d.object(forKey: "sideBars") == nil ? true : d.bool(forKey: "sideBars"))
+        musicEnabled = (d.object(forKey: "musicEnabled") == nil ? true : d.bool(forKey: "musicEnabled"))
         animStyle = AnimStyle(rawValue: d.string(forKey: "animStyle") ?? "") ?? .bouncy
-        keepAwake = d.object(forKey: "keepAwake") as? Bool ?? false
-        autoAwake = d.object(forKey: "autoAwake") as? Bool ?? true
-        muted = d.object(forKey: "muted") as? Bool ?? false
+        let deadline = d.object(forKey: "keepAwakeUntil") as? Date
+        let savedHold = (d.object(forKey: "keepAwake") == nil ? false : d.bool(forKey: "keepAwake"))
+        let expired = Self.holdExpired(keepAwake: savedHold, until: deadline, now: Date())
+        keepAwake = savedHold && !expired
+        keepAwakeUntil = expired || !savedHold ? nil : deadline
+        if expired {
+            d.set(false, forKey: "keepAwake")
+            d.removeObject(forKey: "keepAwakeUntil")
+        }
+        autoAwake = (d.object(forKey: "autoAwake") == nil ? true : d.bool(forKey: "autoAwake"))
+        muted = (d.object(forKey: "muted") == nil ? false : d.bool(forKey: "muted"))
         attentionPeekSeconds = d.object(forKey: "attentionPeekSeconds") as? Double ?? 30
         donePeekSeconds = d.object(forKey: "donePeekSeconds") as? Double ?? 7
         clipboardPeekSeconds = d.object(forKey: "clipboardPeekSeconds") as? Double ?? 3.5
         musicPeekSeconds = d.object(forKey: "musicPeekSeconds") as? Double ?? 4
         hoverCollapseDelay = d.object(forKey: "hoverCollapseDelay") as? Double ?? 0.6
-        alwaysShowIndicator = d.object(forKey: "alwaysShowIndicator") as? Bool ?? false
+        alwaysShowIndicator = (d.object(forKey: "alwaysShowIndicator") == nil ? false : d.bool(forKey: "alwaysShowIndicator"))
         edgeSide = EdgeSide(rawValue: d.string(forKey: "edgeSide") ?? "") ?? .right
-        edgeGripBar = d.object(forKey: "edgeGripBar") as? Bool ?? false
-        edgePlacement = d.object(forKey: "edgePlacement") as? Bool ?? true
+        edgeGripBar = (d.object(forKey: "edgeGripBar") == nil ? false : d.bool(forKey: "edgeGripBar"))
+        edgePlacement = (d.object(forKey: "edgePlacement") == nil ? true : d.bool(forKey: "edgePlacement"))
         let anchor = d.object(forKey: "edgeAnchor") as? Double ?? Double(EdgeGeometry.anchorFraction)
         edgeAnchor = min(Self.edgeAnchorRange.upperBound, max(Self.edgeAnchorRange.lowerBound, anchor))
-        dismissHotKeyEnabled = d.object(forKey: "dismissHotKeyEnabled") as? Bool ?? true
-        clickPeekDismisses = d.object(forKey: "clickPeekDismisses") as? Bool ?? true
-        hoverExpandsPeek = d.object(forKey: "hoverExpandsPeek") as? Bool ?? false
-        keepScreenOn = d.object(forKey: "keepScreenOn") as? Bool ?? true
-        autoUpdateCheck = d.object(forKey: "autoUpdateCheck") as? Bool ?? true
+        dismissHotKeyEnabled = (d.object(forKey: "dismissHotKeyEnabled") == nil ? true : d.bool(forKey: "dismissHotKeyEnabled"))
+        clickPeekDismisses = (d.object(forKey: "clickPeekDismisses") == nil ? true : d.bool(forKey: "clickPeekDismisses"))
+        hoverExpandsPeek = (d.object(forKey: "hoverExpandsPeek") == nil ? false : d.bool(forKey: "hoverExpandsPeek"))
+        keepScreenOn = (d.object(forKey: "keepScreenOn") == nil ? true : d.bool(forKey: "keepScreenOn"))
+        autoUpdateCheck = (d.object(forKey: "autoUpdateCheck") == nil ? true : d.bool(forKey: "autoUpdateCheck"))
         openAtLogin = LoginItem.isEnabled
         updateCaffeine()
     }
@@ -411,8 +446,8 @@ final class AppState: ObservableObject {
     var aggregate: EventKind {
         if attentionCount > 0 || pendingAttention > 0 { return .attention }
         if runningCount > 0 { return .running }
-        if let last = sessions.map(\.updated).max(), Date().timeIntervalSince(last) < 300,
-           sessions.contains(where: { $0.kind == .done }) { return .done }
+        if sessions.contains(where: { $0.kind == .done && $0.outcome == .finished
+            && Date().timeIntervalSince($0.updated) < 300 }) { return .done }
         return .info
     }
 
@@ -421,6 +456,7 @@ final class AppState: ObservableObject {
     /// Runs shorter than this get only the silent peek — you were probably
     /// watching that session anyway; banners are for runs you walked away from.
     static let longRunThreshold: TimeInterval = 45
+    private var explicitFinishes: [String: Date] = [:]
     var runStarts: [String: Date] = [:]  // internal for tests
 
     /// How long a run lasted. An unknown start means unknown length, which
@@ -487,7 +523,14 @@ final class AppState: ObservableObject {
         events.insert(event, at: 0)
         if events.count > 150 { events.removeLast(events.count - 150) }
 
-        if event.kind == .running { noteRunStart(event.sourceKey, at: event.ts) }
+        if event.kind == .running {
+            explicitFinishes.removeValue(forKey: event.sourceKey)
+            noteRunStart(event.sourceKey, at: event.ts)
+        }
+        if event.kind == .done && event.hook != "registry" { explicitFinishes[event.sourceKey] = event.ts }
+        if explicitFinishes.count > 128 {
+            explicitFinishes = Dictionary(uniqueKeysWithValues: explicitFinishes.sorted { $0.value > $1.value }.prefix(128).map { ($0.key, $0.value) })
+        }
         // An unknown start is NOT a long run. Treating it as infinite meant
         // every finish without a recorded start rang the bell — and starts
         // are lost on every app restart, so a relaunch turned ordinary
@@ -504,11 +547,11 @@ final class AppState: ObservableObject {
             case .running, .info: break  // your own prompt isn't news
             }
         }
-        let alerted = Self.shouldAlert(kind: event.kind, runDuration: runDuration, muted: muted)
+        let alerted = event.outcome != .unknown && Self.shouldAlert(kind: event.kind, runDuration: runDuration, muted: muted)
         noteAlertDecision(event, runDuration: runDuration, alerted: alerted)
         if alerted {
             Notifier.shared.post(for: event, enabled: systemNotifications)
-            if sounds { Sound.play(for: event.kind) }
+            if sounds && (event.kind != .done || event.outcome == .finished) { Sound.play(for: event.kind) }
         }
         refreshCollapsedFrame()
     }
@@ -566,7 +609,7 @@ final class AppState: ObservableObject {
         switch mode {
         case .off: reason = ""
         case .display: reason = "manual"
-        case .system: reason = (runningCount > 0 || attentionCount > 0) ? "agents" : "cooldown"
+        case .system: reason = keepAwake ? "manual" : ((runningCount > 0 || attentionCount > 0) ? "agents" : "cooldown")
         }
         if reason != awakeReason { awakeReason = reason }
     }
@@ -579,7 +622,9 @@ final class AppState: ObservableObject {
                 pendingAttention = max(0, pendingAttention - 1)
             }
             sessions[i].kind = e.kind
-            sessions[i].message = e.message
+            sessions[i].outcome = e.outcome
+            if e.focus.hasLocation { sessions[i].focus = e.focus }
+            sessions[i].message = cleanSessionMessage(e.message)
             sessions[i].updated = e.ts
             if !e.project.isEmpty { sessions[i].project = e.project }
             if !e.sessionName.isEmpty { sessions[i].sessionName = e.sessionName }
@@ -591,6 +636,8 @@ final class AppState: ObservableObject {
                                     message: e.message, updated: e.ts)
             fresh.app = e.app
             fresh.model = e.model
+            fresh.outcome = e.outcome
+            fresh.focus = e.focus
             sessions.append(fresh)
         }
         // One count per waiting session, not per notification. Claude Code
@@ -634,6 +681,7 @@ final class AppState: ObservableObject {
         if sessions[i].kind == .attention { pendingAttention = max(0, pendingAttention - 1) }
         runStarts.removeValue(forKey: sessions[i].id)
         sessions[i].kind = .done
+        sessions[i].outcome = .unknown
         sessions[i].message = message
         sessions[i].updated = Date()
         sortSessions()
@@ -651,6 +699,8 @@ final class AppState: ObservableObject {
     // MARK: - Session registry sync (~/.claude/sessions, local or reported by a remote box)
 
     private var registryActive: [String: Set<String>] = [:]
+    private var registryProviders: [String: Set<String>] = [:]
+    @Published private(set) var reporterVersions: [String: String] = [:]
 
     @Published private(set) var hostUsage: [String: [String: Int]] = [:]
     @Published private(set) var hostHours: [String: [Int: Int]] = [:]
@@ -684,7 +734,7 @@ final class AppState: ObservableObject {
         // the Mac awake for another sweep.
         let doomed = sessions.filter { s in
             guard s.kind == .running || s.kind == .attention else { return false }
-            if let seen = hostLastReport[s.host] {
+            if (registryProviders[s.host] ?? ["claude"]).contains(s.app.isEmpty ? "claude" : s.app), let seen = hostLastReport[s.host] {
                 return now.timeIntervalSince(seen) > Self.hostSilenceCutoff
             }
             // Hosts that never report (web tabs, hook-only sources) are
@@ -693,6 +743,12 @@ final class AppState: ObservableObject {
             return now.timeIntervalSince(s.updated) > cutoff
         }.map(\.id)
         for id in doomed { demoteQuietly(id: id, message: "lost contact") }
+        for (host, seen) in hostLastReport where now.timeIntervalSince(seen) > Self.hostSilenceCutoff {
+            if hostUsage[host] != nil { hostUsage.removeValue(forKey: host) }
+            if hostHours[host] != nil { hostHours.removeValue(forKey: host) }
+            hostAccount.removeValue(forKey: host)
+        }
+        rebuildAccountLimits(now: now)
         let mutated = !doomed.isEmpty
         let before = sessions.count
         sessions.removeAll { $0.kind == .done && now.timeIntervalSince($0.updated) > 1800 }
@@ -732,24 +788,23 @@ final class AppState: ObservableObject {
     func syncRegistry(_ report: RegistryReport) {
         let host = Host.normalize(report.host)
         syncRegistry(host: host, entries: report.entries,
-                     usage: report.usage, hours: report.hours)
+                     usage: report.usage, hours: report.hours, providers: report.providers)
+        if reporterVersions[host] != report.reporterVersion { reporterVersions[host] = report.reporterVersion }
         for limits in report.limits {
             hostAccount[host, default: [:]][limits.provider] = limits.key
             if limits.fetchedAt >= (limitsByAccount[limits.key]?.fetchedAt ?? .distantPast) {
                 limitsByAccount[limits.key] = limits
             }
         }
-        guard !report.limits.isEmpty else { return }
         rebuildAccountLimits()
     }
 
-    private func rebuildAccountLimits() {
-        let now = Date()
+    private func rebuildAccountLimits(now: Date = Date()) {
         var byAccount: [String: Set<String>] = [:]
         for (host, keys) in hostAccount {
             for key in keys.values { byAccount[key, default: []].insert(host) }
         }
-        accountLimits = limitsByAccount.values
+        let rebuilt = limitsByAccount.values
             .filter { now.timeIntervalSince($0.fetchedAt) < $0.retention }
             .map { limits in
                 var l = limits
@@ -758,69 +813,70 @@ final class AppState: ObservableObject {
             }
             .filter { !$0.hosts.isEmpty }   // an account nobody reports is gone
             .sorted { $0.fetchedAt > $1.fetchedAt }
-        limitsByAccount = limitsByAccount.filter { key, _ in byAccount[key] != nil }
+        if rebuilt != accountLimits { accountLimits = rebuilt }
+        limitsByAccount = limitsByAccount.filter { key, value in
+            byAccount[key] != nil && now.timeIntervalSince(value.fetchedAt) < value.retention
+        }
     }
 
-    func syncRegistry(host rawHost: String, entries: [LocalSessionEntry], usage: [String: Int] = [:], hours: [Int: Int] = [:]) {
+    func syncRegistry(host rawHost: String, entries: [LocalSessionEntry], usage: [String: Int] = [:], hours: [Int: Int] = [:], providers: Set<String> = ["claude", "codex"]) {
         let host = Host.normalize(rawHost)
         hostLastReport[host] = Date()
-        // Same reason as applyStats: an unchanged reading must not republish.
+        registryProviders[host] = providers
         if !usage.isEmpty, hostUsage[host] != usage { hostUsage[host] = usage }
         if !hours.isEmpty, hostHours[host] != hours { hostHours[host] = hours }
         let primed = registryActive[host] != nil
         let last = registryActive[host] ?? []
-        let present = Set(entries.map(\.sessionId))
+        func key(_ e: LocalSessionEntry) -> String { sessionKey(host: host, app: e.app, sessionId: e.sessionId) }
+        let present = Set(entries.map(key))
         var activeNow = Set<String>()
-        for e in entries { latestEntries["\(host)#\(e.sessionId)"] = e }
-        for e in entries where e.isActive {
-            activeNow.insert(e.sessionId)
-            localSessionActive(e, host: host, announce: primed && !last.contains(e.sessionId))
+        var demoted = false
+        for e in entries {
+            let id = key(e)
+            latestEntries[id] = e
+            if let i = sessions.firstIndex(where: { $0.id == id }) { applyStats(e, at: i) }
+            if e.isActive {
+                activeNow.insert(id)
+                localSessionActive(e, host: host, announce: primed && !last.contains(id))
+            } else if let s = sessions.first(where: { $0.id == id }), s.kind == .running || s.kind == .attention {
+                if e.outcome.isEmpty || e.outcome == "unknown" {
+                    demoteQuietly(id: id, message: "status unavailable")
+                    demoted = true
+                } else {
+                    localSessionFinished(e, host: host)
+                }
+            }
         }
         if primed {
-            for e in entries where last.contains(e.sessionId) && !e.isActive {
-                localSessionFinished(e, host: host)
-            }
             for id in last.subtracting(activeNow).subtracting(present) {
-                localSessionGone(id, host: host)
+                if let session = sessions.first(where: { $0.id == id }), session.kind == .running || session.kind == .attention {
+                    demoteQuietly(id: id, message: "session ended")
+                    demoted = true
+                }
             }
         }
         registryActive[host] = activeNow
-        // Hook-created cards for sessions this host's own registry doesn't
-        // list (the terminal died before or between reports) must not stay
-        // "working" forever — the stuck-attention class of ghosts.
         let prefix = "\(host)#"
         let orphans = sessions.filter { s in
-            guard s.id.hasPrefix(prefix),
-                  s.kind == .running || s.kind == .attention else { return false }
-            let sid = String(s.id.dropFirst(prefix.count))
-            return !sid.isEmpty && !present.contains(sid)
-                && Date().timeIntervalSince(s.updated) > Self.registryOrphanGrace
+            s.host == host && providers.contains(s.app.isEmpty ? "claude" : s.app)
+                && (s.kind == .running || s.kind == .attention)
+                && !present.contains(s.id) && Date().timeIntervalSince(s.updated) > Self.registryOrphanGrace
         }.map(\.id)
         for id in orphans { demoteQuietly(id: id, message: "session ended") }
-        let mutated = !orphans.isEmpty
-        // Snapshots for sessions this host no longer lists are dead weight —
-        // nothing evicted them, so the dictionary grew for the life of the
-        // app. A finish still waiting on its verdict keeps its snapshot.
         let keep = { (key: String) -> Bool in
-            guard key.hasPrefix(prefix) else { return true }
-            let sid = String(key.dropFirst(prefix.count))
-            return present.contains(sid) || self.pendingFinish[key] != nil
+            !key.hasPrefix(prefix) || present.contains(key) || self.pendingFinish[key] != nil
         }
-        // Rebuilding the dictionary every heartbeat allocated one for nothing
-        // in the overwhelmingly common case where there is nothing to evict.
         if latestEntries.keys.contains(where: { !keep($0) }) {
             latestEntries = latestEntries.filter { key, _ in keep(key) }
         }
-        // Drop long-finished sessions so the list stays live.
         let stale = sessions.contains { $0.kind == .done && Date().timeIntervalSince($0.updated) > 1800 }
-        if stale {
-            sessions.removeAll { $0.kind == .done && Date().timeIntervalSince($0.updated) > 1800 }
-        }
-        if mutated || stale { refreshCollapsedFrame() }
+        if stale { sessions.removeAll { $0.kind == .done && Date().timeIntervalSince($0.updated) > 1800 } }
+        if demoted || !orphans.isEmpty || stale { refreshCollapsedFrame() }
     }
 
     private func localSessionActive(_ e: LocalSessionEntry, host: String, announce: Bool) {
-        let key = "\(host)#\(e.sessionId)"
+        let key = sessionKey(host: host, app: e.app, sessionId: e.sessionId)
+        if let finished = explicitFinishes[key], e.updatedAt / 1000 <= finished.timeIntervalSince1970 { return }
         // Session became active again before a pending finish resolved —
         // that blip (e.g. prompt + instant Esc + retype) wasn't a real end.
         if let pending = pendingFinish[key] {
@@ -840,7 +896,7 @@ final class AppState: ObservableObject {
             return
         }
         let ev = AgentEvent(kind: .running, host: host, project: project, sessionId: e.sessionId,
-                            sessionName: e.name, message: "started", hook: "registry", image: nil, ts: Date())
+                            sessionName: e.name, message: "started", hook: "registry", app: e.app, focus: e.focus, image: nil, ts: Date())
         if announce {
             apply(ev)
         } else {
@@ -865,6 +921,8 @@ final class AppState: ObservableObject {
         if !e.app.isEmpty { s.app = e.app }
         if !e.model.isEmpty { s.model = e.model }
         if !e.effort.isEmpty { s.effort = e.effort }
+        s.ctxLimit = e.ctxLimit
+        if e.focus.hasLocation { s.focus = e.focus }
         if e.ctxUsed > 0 {
             s.ctxUsed = e.ctxUsed
             s.lastIn = e.lastIn
@@ -888,7 +946,7 @@ final class AppState: ObservableObject {
     var finishVerdictDelay: TimeInterval = 6
 
     private func localSessionFinished(_ e: LocalSessionEntry, host: String) {
-        let key = "\(host)#\(e.sessionId)"
+        let key = sessionKey(host: host, app: e.app, sessionId: e.sessionId)
         // Attention counts too: a session that dies while waiting for approval
         // must resolve rather than glow orange forever.
         guard let i = sessions.firstIndex(where: { $0.id == key }),
@@ -897,7 +955,7 @@ final class AppState: ObservableObject {
         // interrupt/error markers may not be flushed or rescanned yet. Wait
         // for a fresher snapshot, then judge. A hook Stop event landing in
         // the meantime wins (kind is no longer .running → we stay silent).
-        pendingFinish[key]?.cancel()
+        guard pendingFinish[key] == nil else { return }
         pendingFinish[key] = Task { [weak self, delay = finishVerdictDelay] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard let self, !Task.isCancelled else { return }
@@ -906,16 +964,13 @@ final class AppState: ObservableObject {
                   self.sessions[i].kind == .running || self.sessions[i].kind == .attention else { return }
             let fresh = self.latestEntries[key] ?? e
             let name = fresh.name.isEmpty ? self.sessions[i].sessionName : fresh.name
-            let message: String
-            switch fresh.outcome {
-            case "interrupted": message = "interrupted by you"
-            case "error": message = "ended with an error ⚠︎"
-            default: message = "finished"
-            }
+            let outcome = SessionOutcome(rawValue: fresh.outcome) ?? .unknown
+            let message = outcome.label
+            self.applyStats(fresh, at: i)
             self.apply(AgentEvent(kind: .done, host: host,
                                   project: (fresh.cwd as NSString).lastPathComponent,
                                   sessionId: fresh.sessionId, sessionName: name, message: message,
-                                  hook: "registry", image: nil, ts: Date()))
+                                  hook: "registry", app: fresh.app, outcome: outcome, focus: fresh.focus, image: nil, ts: Date()))
         }
     }
 
@@ -1041,13 +1096,6 @@ final class AppState: ObservableObject {
         guard let np = nowPlaying else { return }
         if np.isWeb {
             webMusicQueue?.push("focus", tab: np.tab)
-            for bid in ["com.google.Chrome", "com.apple.Safari",
-                        "company.thebrowser.Browser", "com.microsoft.edgemac"] {
-                if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bid).first {
-                    app.activate(options: [])
-                    break
-                }
-            }
         } else {
             let bid = np.app == "Spotify" ? "com.spotify.client" : "com.apple.Music"
             NSRunningApplication.runningApplications(withBundleIdentifier: bid).first?.activate(options: [])
@@ -1062,6 +1110,8 @@ final class AppState: ObservableObject {
 
     /// Bumped per artwork request so a slow fetch can't overwrite a newer one.
     private var artworkGeneration = 0
+    private var lastArtworkKey: String?
+    private var artworkTask: URLSessionDataTask?
 
     private func setNowPlaying(_ incoming: NowPlaying?) {
         var np = incoming
@@ -1074,32 +1124,36 @@ final class AppState: ObservableObject {
         }
         // Reports arrive every 2s; identical state must not churn the UI.
         if nowPlaying != np { nowPlaying = np }
-        // Keyed off the last *announced* track, not the current value: a track
-        // briefly going stale and coming back is not a new song, and must not
-        // re-peek or re-fetch artwork.
-        guard let np, np.title != lastMusicTitle else { return }
-        lastMusicTitle = np.title
-        nowPlayingArt = nil
-        nowPlayingArtColor = nil
-        if !np.artworkURL.isEmpty, let url = URL(string: np.artworkURL) {
-            // Skipping tracks used to leave whichever fetch finished last on
-            // screen — track B playing under track A's art and glow. Only the
-            // newest request may paint.
+        // Invalidate even for nil/no-art tracks, and include source + artist:
+        // a late download must never paint over a newer track without artwork.
+        if lastArtworkKey != np?.artworkKey {
+            lastArtworkKey = np?.artworkKey
             artworkGeneration &+= 1
-            let generation = artworkGeneration
-            URLSession.shared.dataTask(with: url) { data, _, _ in
-                guard let data, let img = NSImage(data: data) else { return }
-                let thumb = img.hudThumbnail(maxDim: 240)
-                let avg = thumb.averageColor
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated {
-                        guard self.artworkGeneration == generation else { return }
-                        self.nowPlayingArt = thumb
-                        self.nowPlayingArtColor = avg
+            artworkTask?.cancel()
+            artworkTask = nil
+            nowPlayingArt = nil
+            nowPlayingArtColor = nil
+            if let np, let url = URL(string: np.artworkURL), url.scheme == "https" {
+                let generation = artworkGeneration
+                artworkTask = URLSession.shared.dataTask(with: url) { [weak self] data, response, _ in
+                    guard let data, data.count <= 8_000_000,
+                          (response as? HTTPURLResponse)?.statusCode == 200,
+                          let (cg, _, _) = ClipboardWatcher.downsample(data, maxDim: 240) else { return }
+                    let thumb = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+                    let avg = thumb.averageColor
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            guard let self, self.artworkGeneration == generation else { return }
+                            self.nowPlayingArt = thumb
+                            self.nowPlayingArtColor = avg
+                        }
                     }
                 }
-            }.resume()
+                artworkTask?.resume()
+            }
         }
+        guard let np, np.title != lastMusicTitle else { return }
+        lastMusicTitle = np.title
         let lastPeek = recentPeeks[np.title]
         if np.playing && !hudState.isOpen,
            lastPeek.map({ Date().timeIntervalSince($0) > Self.peekEncore }) ?? true {
@@ -1159,8 +1213,7 @@ final class AppState: ObservableObject {
 
     func clearEvents() {
         events.removeAll()
-        sessions.removeAll()
-        pendingAttention = 0
+        alertLog.removeAll()
         refreshCollapsedFrame()
     }
 

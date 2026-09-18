@@ -5,6 +5,7 @@
 //     node tests/test_extension.mjs        (or: make test)
 import assert from "node:assert";
 import fs from "node:fs";
+import vm from "node:vm";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -76,4 +77,63 @@ test("a parked answer re-parks promptly, an unparked one waits longer", () => {
   assert.ok(P.nextDelay({ ok: true }, true) < P.nextDelay({ ok: true }, false));
 });
 
+
+
+new Function(fs.readFileSync(path.join(here, "..", "extension", "chat-lifecycle.js"), "utf8"))();
+function chatFixture() {
+  const events = [];
+  const tracker = new globalThis.HUDChatLifecycle({ provider: "chatgpt", canonical: p => p.startsWith("/c/") ? p : "",
+    send: e => events.push(e) });
+  const tick = (p, generating, now, extra = {}) => tracker.tick({ path: p, generating, now, title: p, url: "https://chatgpt.com" + p, ...extra });
+  return { events, tracker, tick };
+}
+test("new conversation keeps its identity on the next turn", () => {
+  const { events, tick } = chatFixture();
+  tick("/", true, 1000); tick("/c/123", true, 2000);
+  tick("/c/123", false, 3000); tick("/c/123", false, 5000);
+  tick("/c/123", true, 6000);
+  assert.equal(new Set(events.map(e => e.session_id)).size, 1);
+});
+test("navigation ends the old conversation without reporting success or renaming it", () => {
+  const { events, tick } = chatFixture();
+  tick("/c/123", true, 1000); tick("/c/456", false, 2000);
+  assert.equal(events.at(-1).outcome, "unknown");
+  assert.equal(events.at(-1).session_name, "/c/123");
+});
+test("stop-button flicker is debounced and a user stop is interrupted", () => {
+  const { events, tracker, tick } = chatFixture();
+  tick("/c/123", true, 1000); tick("/c/123", false, 2000); tick("/c/123", true, 3000);
+  assert.equal(events.length, 1);
+  tracker.interrupted = true;
+  tick("/c/123", false, 4000); tick("/c/123", false, 6000);
+  assert.equal(events.at(-1).outcome, "interrupted");
+});
+test("missing DOM evidence never produces a successful finish", () => {
+  const { events, tick } = chatFixture();
+  tick("/c/123", true, 1000); tick("/c/123", false, 2000); tick("/c/123", false, 4000);
+  assert.equal(events.at(-1).outcome, "unknown");
+});
+
+
+
+for (const [provider, initial, canonical] of [["chatgpt", "/", "/c/test"], ["claude", "/new", "/chat/test"]]) {
+  test(provider + " actual DOM adapter preserves conversation and reports navigation honestly", () => {
+    const events = []; let tick; let streaming = true; let now = 1000;
+    const context = { HUDChatLifecycle: globalThis.HUDChatLifecycle,
+      location: { pathname: initial, href: "https://example.test" + initial },
+      document: { title: "Example chat", querySelector: selector => selector.includes("conversation-error") ? null : streaming ? {} : null,
+        addEventListener() {} }, sessionStorage: { getItem() { return null; }, setItem() {} },
+      chrome: { runtime: { sendMessage: msg => events.push(msg.body) } },
+      addEventListener() {}, setInterval: fn => { tick = fn; },
+    };
+    vm.runInNewContext(fs.readFileSync(path.join(here, "..", "extension", provider + ".js"), "utf8"), context);
+    tick();
+    context.location.pathname = canonical; tick();
+    const identity = events[0].session_id;
+    context.location.pathname = "/different"; streaming = false; context.document.title = "Other chat"; tick();
+    assert.equal(events.at(-1).session_id, identity);
+    assert.equal(events.at(-1).session_name, "Example chat");
+    assert.equal(events.at(-1).outcome, "unknown");
+  });
+}
 console.log(`\n${run} extension tests`);

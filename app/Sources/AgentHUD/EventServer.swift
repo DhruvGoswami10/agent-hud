@@ -64,6 +64,8 @@ final class EventServer {
     private let onDebug: () -> String
     /// Compact snapshot for the watch app; falls back to {} if unset.
     var onWatch: (() -> String)?
+    var onStatus: ((String) -> Void)?
+    var browserToken = ""
     /// Optional: POST /music/commands → (command, explicit tab or nil).
     var onMusicCommand: ((String, String?) -> Void)?
     let musicCommands = CommandQueue()
@@ -98,6 +100,15 @@ final class EventServer {
         params.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!)
         let l = try NWListener(using: params)
         l.newConnectionHandler = { [weak self] conn in self?.accept(conn) }
+        l.stateUpdateHandler = { [weak self] status in
+            switch status {
+            case .ready: self?.onStatus?("listening on 127.0.0.1:\(self?.port ?? 0)")
+            case .failed(let error): self?.onStatus?("failed: \(error)")
+            case .waiting(let error): self?.onStatus?("waiting: \(error)")
+            case .cancelled: self?.onStatus?("stopped")
+            default: break
+            }
+        }
         l.start(queue: queue)
         listener = l
         NSLog("AgentHUD: listening on 127.0.0.1:\(port)")
@@ -172,10 +183,12 @@ final class EventServer {
         }
     }
 
-    private func route(_ conn: NWConnection, _ req: (method: String, path: String, body: Data, origin: String?)) {
+    private func route(_ conn: NWConnection, _ req: (method: String, path: String, body: Data, origin: String?, token: String?, browser: Bool)) {
         // A page on the open web must not be able to forge events, read the
         // session feed off /debug, or reach the music endpoints.
-        guard Self.isAllowedOrigin(req.origin) else {
+        guard Self.isAllowedOrigin(req.origin, token: req.token, expectedToken: browserToken,
+                                   preflight: req.method == "OPTIONS"),
+              !req.browser || (req.token == browserToken && !browserToken.isEmpty) else {
             respond(conn, status: "403 Forbidden", body: #"{"ok":false,"error":"origin not allowed"}"#,
                     origin: nil)
             return
@@ -190,7 +203,7 @@ final class EventServer {
             let head = "HTTP/1.1 204 No Content\r\n"
                 + Self.corsHeader(origin)
                 + "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
-                + "Access-Control-Allow-Headers: Content-Type\r\n"
+                + "Access-Control-Allow-Headers: Content-Type, X-Agent-HUD-Token, X-Agent-HUD-Client\r\n"
                 + "Access-Control-Allow-Private-Network: true\r\n"
                 + "Content-Length: 0\r\nConnection: close\r\n\r\n"
             conn.send(content: Data(head.utf8), completion: .contentProcessed { _ in conn.cancel() })
@@ -282,7 +295,9 @@ final class EventServer {
                     topFile: (j["top_file"] as? String) ?? "",
                     app: (j["app"] as? String) ?? "",
                     totalTokens: (j["total_tokens"] as? Int) ?? 0,
-                    turns: (j["turns"] as? Int) ?? 0
+                    turns: (j["turns"] as? Int) ?? 0,
+                    ctxLimit: (j["ctx_limit"] as? Int) ?? 0,
+                    focus: SessionFocus(json: j["focus"] as? [String: Any] ?? [:], cwd: j["cwd"] as? String ?? "")
                 )
             }
             let usageObj = (obj["usage"] as? [String: Any]) ?? [:]
@@ -304,7 +319,9 @@ final class EventServer {
             limits += ((obj["limits_extra"] as? [[String: Any]]) ?? [])
                 .compactMap(AccountLimits.from(json:))
             onSessions(RegistryReport(host: host, entries: entries, usage: usage,
-                                      hours: hours, limits: limits))
+                                      hours: hours, limits: limits,
+                                      providers: Set(obj["providers"] as? [String] ?? ["claude", "codex"]),
+                                      reporterVersion: obj["reporter_version"] as? String ?? "legacy"))
             respond(conn, status: "200 OK", body: #"{"ok":true,"sessions":\#(entries.count)}"#, origin: origin)
         case ("GET", "/watch"):
             respond(conn, status: "200 OK", body: onWatch?() ?? "{}", origin: origin)
@@ -339,7 +356,7 @@ final class EventServer {
     /// Echo the caller's own origin rather than a wildcard: `*` handed every
     /// website on the internet a readable channel to the HUD.
     private static func corsHeader(_ origin: String?) -> String {
-        guard let origin, !origin.isEmpty, isAllowedOrigin(origin) else { return "" }
+        guard let origin, !origin.isEmpty, isExtensionOrigin(origin) else { return "" }
         return "Access-Control-Allow-Origin: \(origin)\r\nVary: Origin\r\n"
     }
 
@@ -363,7 +380,7 @@ final class EventServer {
         return nil
     }
 
-    static func parseRequest(_ data: Data) -> (method: String, path: String, body: Data, origin: String?)? {
+    static func parseRequest(_ data: Data) -> (method: String, path: String, body: Data, origin: String?, token: String?, browser: Bool)? {
         guard let headerEnd = data.range(of: Data("\r\n\r\n".utf8)) else { return nil }
         let head = String(decoding: data[data.startIndex..<headerEnd.lowerBound], as: UTF8.self)
         let lines = head.components(separatedBy: "\r\n")
@@ -372,6 +389,8 @@ final class EventServer {
         guard parts.count >= 2 else { return nil }
         var contentLength = 0
         var origin: String?
+        var token: String?
+        var browser = false
         for line in lines.dropFirst() {
             let kv = line.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
             guard kv.count == 2 else { continue }
@@ -385,13 +404,15 @@ final class EventServer {
                 contentLength = max(0, Int(value) ?? 0)
             case "origin":
                 origin = value
+            case "x-agent-hud-token": token = value
+            case "x-agent-hud-client": browser = value == "browser"
             default:
                 break
             }
         }
         let body = data[headerEnd.upperBound...]
         guard body.count >= contentLength else { return nil }
-        return (String(parts[0]), String(parts[1]), Data(body.prefix(contentLength)), origin)
+        return (String(parts[0]), String(parts[1]), Data(body.prefix(contentLength)), origin, token, browser)
     }
 
     /// Who may drive the HUD. Local senders — the hook scripts, curl, the
@@ -399,12 +420,21 @@ final class EventServer {
     /// cross-origin request, including no-cors sends. So refusing every
     /// non-extension Origin locks out drive-by pages on the open web while
     /// leaving every legitimate client untouched.
-    static func isAllowedOrigin(_ origin: String?) -> Bool {
-        // No header at all means a native client. A literal "null" is a
-        // browser context (sandboxed iframe, file://) and is not one of ours.
+    static func isExtensionOrigin(_ origin: String) -> Bool {
+        guard let url = URL(string: origin), let host = url.host, !host.isEmpty,
+              url.user == nil, url.password == nil, url.port == nil,
+              url.path.isEmpty, url.query == nil, url.fragment == nil else { return false }
+        return ["chrome-extension", "safari-web-extension", "moz-extension"].contains(url.scheme ?? "")
+    }
+
+    static func isAllowedOrigin(_ origin: String?, token: String? = nil,
+                                expectedToken: String? = nil, preflight: Bool = false) -> Bool {
         guard let origin, !origin.isEmpty else { return true }
-        for scheme in ["chrome-extension://", "safari-web-extension://", "moz-extension://"]
-        where origin.hasPrefix(scheme) { return true }
-        return false
+        guard isExtensionOrigin(origin) else { return false }
+        // Preflights carry no credentials and expose no data. Actual extension
+        // requests must present the pairing secret copied from the Mac app.
+        if preflight { return true }
+        guard let expectedToken, !expectedToken.isEmpty else { return false }
+        return token == expectedToken
     }
 }

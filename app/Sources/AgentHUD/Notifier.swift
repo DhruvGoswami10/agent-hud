@@ -74,7 +74,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         // Built here, on the caller's thread: event.label reads the shared
         // HostAliases map, which the alias timer mutates on the main thread —
         // touching it from the settings callback's queue was a data race.
-        let title = event.kind == .attention ? "\(event.label) needs you" : "\(event.label) — done"
+        let title = event.kind == .attention ? "\(event.label) needs you" : "\(event.label) — \(event.outcome.label)"
         let body = event.message
         // Asked per post, not cached from the launch prompt: this app runs for
         // weeks, and a permission granted in System Settings afterwards used

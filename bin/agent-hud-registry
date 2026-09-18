@@ -183,6 +183,7 @@ def snapshot():
             "name": display_name(sid, j.get("name") or ""),
             "cwd": j.get("cwd") or "",
             "status": j.get("status") or "",
+            "app": "claude",
             "updatedAt": j.get("updatedAt") or 0,
         }
         row.update(session_stats(sid))
@@ -238,65 +239,80 @@ def _count_tool_use(block, files):
 
 
 def file_changes(sid):
+    """Estimated editing activity, only after a successful matching tool result."""
     path = transcript_for(sid)
     if not path:
         return {}
-    rec = _changes.setdefault(sid, {"offset": 0, "files": {}, "tokens": 0, "turns": 0})
+    def empty():
+        return {"offset": 0, "files": {}, "tokens": 0, "turns": 0,
+                "pending": {}, "usage": {}}
+    rec = _changes.setdefault(sid, empty())
     try:
         size = os.path.getsize(path)
-        if size < rec["offset"]:  # rotated/truncated: start over
-            rec["offset"], rec["files"], rec["tokens"], rec["turns"] = 0, {}, 0, 0
+        if size < rec["offset"]:
+            rec = _changes[sid] = empty()
         if size > rec["offset"]:
             with open(path, "rb") as f:
                 f.seek(rec["offset"])
-                offset = f.tell()
                 for line in f:
                     if not line.endswith(b"\n"):
-                        break  # partial write; resume here next round
-                    offset = f.tell()
-                    if b'"tool_use"' not in line and b'"usage"' not in line:
-                        continue
+                        break
+                    rec["offset"] = f.tell()
                     try:
                         j = json.loads(line)
-                    except Exception:
+                    except ValueError:
                         continue
-                    if j.get("type") != "assistant":
-                        continue
-                    # Cumulative cost of the session, not the live window:
-                    # ctx_used says how full the context is, this says how
-                    # much the whole conversation has burned.
-                    u = (j.get("message") or {}).get("usage") or {}
-                    if u:
-                        rec["tokens"] += ((u.get("input_tokens") or 0)
-                                          + (u.get("cache_creation_input_tokens") or 0)
-                                          + (u.get("output_tokens") or 0))
-                        rec["turns"] += 1
-                    for block in (j.get("message") or {}).get("content") or []:
-                        _count_tool_use(block, rec["files"])
-                rec["offset"] = offset
-    except Exception:
+                    message = j.get("message") or {}
+                    content = message.get("content") or []
+                    if isinstance(content, str):
+                        content = [{"type": "text", "text": content}]
+                    if j.get("type") == "user":
+                        if any(b.get("type") == "text" and b.get("text", "").strip()
+                               and not b.get("text", "").startswith(("<", "[Request interrupted"))
+                               for b in content if isinstance(b, dict)) and not j.get("isMeta"):
+                            rec["turns"] += 1
+                        for block in content:
+                            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                                continue
+                            attempted = rec["pending"].pop(block.get("tool_use_id"), None)
+                            if attempted and not block.get("is_error"):
+                                _count_tool_use(attempted, rec["files"])
+                    elif j.get("type") == "assistant":
+                        u = message.get("usage") or {}
+                        if u:
+                            tokens = sum(u.get(k) or 0 for k in
+                                         ("input_tokens", "cache_creation_input_tokens", "output_tokens"))
+                            mid = message.get("id") or j.get("uuid") or str(rec["offset"])
+                            previous = rec["usage"].get(mid, 0)
+                            rec["tokens"] += max(0, tokens - previous)
+                            rec["usage"][mid] = max(tokens, previous)
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("id"):
+                                if block.get("name") in EDIT_TOOLS:
+                                    rec["pending"][block["id"]] = block
+                        # Bound retained request bodies and streamed-message IDs.
+                        for key in ("pending", "usage"):
+                            while len(rec[key]) > 512:
+                                rec[key].pop(next(iter(rec[key])))
+    except (OSError, TypeError):
         return {}
     files = rec["files"]
     out = {"total_tokens": rec["tokens"], "turns": rec["turns"]}
     if files:
         top = max(files.items(), key=lambda kv: kv[1][0] + kv[1][1])
-        out.update({
-            "files_changed": len(files),
-            "lines_added": sum(v[0] for v in files.values()),
-            "lines_removed": sum(v[1] for v in files.values()),
-            "top_file": os.path.basename(top[0]),
-        })
+        out.update({"files_changed": len(files), "lines_added": sum(v[0] for v in files.values()),
+                    "lines_removed": sum(v[1] for v in files.values()), "top_file": os.path.basename(top[0])})
     return out
 
 
 # --- Codex sessions -----------------------------------------------------------
 # Codex keeps one rollout JSONL per session under ~/.codex/sessions/YYYY/MM/DD.
-# There is no live registry like Claude Code's ~/.claude/sessions, so liveness
-# comes from the file's own mtime: Codex appends on every event, so a file
-# touched seconds ago belongs to a session that is working.
+# Lifecycle comes from explicit rollout events. A quiet file is not a successful
+# completion; hooks supply approval/interruption events when enabled.
 
 CODEX_SESSIONS = os.path.expanduser("~/.codex/sessions")
-CODEX_BUSY_SECONDS = 90
+CODEX_BUSY_SECONDS = 90  # legacy constant; never used to infer completion
+_codex_state = {}
 _codex_meta = {}   # path -> (session_id, cwd, model)
 _codex_rate = (None, 0.0)   # (rate_limits dict, epoch of the record it came from)
 
@@ -365,84 +381,116 @@ def _codex_ts(rec):
         return 0.0
 
 
+def _codex_read(path):
+    """Incremental lifecycle/usage scan. Preserve the last complete JSON line."""
+    stat = os.stat(path)
+    rec = _codex_state.get(path)
+    if not rec or rec["inode"] != stat.st_ino or stat.st_size < rec["offset"]:
+        rec = _codex_state[path] = {"inode": stat.st_ino, "offset": 0, "mtime": 0,
+            "model": "", "total_tokens": 0, "rate": None, "rate_ts": 0.0,
+            "status": "unknown", "outcome": "unknown", "turns": 0,
+            "ctx_used": 0, "ctx_limit": 0, "last_in": 0, "last_out": 0, "effort": ""}
+    if rec["offset"] == stat.st_size and rec["mtime"] == stat.st_mtime_ns:
+        return rec
+    with open(path, "rb") as f:
+        f.seek(rec["offset"])
+        for line in f:
+            if not line.endswith(b"\n"):
+                break
+            rec["offset"] = f.tell()
+            try:
+                j = json.loads(line)
+            except ValueError:
+                continue
+            pl = j.get("payload") or {}
+            if not isinstance(pl, dict):
+                continue
+            typ = pl.get("type")
+            if j.get("type") == "session_meta":
+                rec["ctx_limit"] = pl.get("context_window") or rec["ctx_limit"]
+                source = pl.get("source") or pl.get("thread_source") or ""
+                rec["internal"] = (isinstance(source, dict) and "subagent" in source) or \
+                    any(x in str(pl.get("originator", "")).lower() for x in ("title_generator", "title-generation"))
+            if j.get("type") == "turn_context":
+                rec["model"] = pl.get("model") or rec["model"]
+                rec["effort"] = pl.get("effort") or rec["effort"]
+            elif j.get("type") == "event_msg":
+                if typ in ("task_started", "turn_started"):
+                    rec["status"], rec["outcome"] = "busy", ""
+                    rec["turns"] += 1
+                    rec["ctx_limit"] = pl.get("model_context_window") or rec["ctx_limit"]
+                elif typ in ("task_complete", "turn_complete", "turn_completed"):
+                    rec["status"], rec["outcome"] = "idle", "finished"
+                elif typ in ("turn_aborted", "task_aborted"):
+                    rec["status"], rec["outcome"] = "idle", "interrupted"
+                elif typ in ("error", "turn_failed"):
+                    rec["status"], rec["outcome"] = "idle", "error"
+                elif typ == "token_count":
+                    rate = pl.get("rate_limits")
+                    if isinstance(rate, dict):
+                        rec["rate"], rec["rate_ts"] = rate, _codex_ts(j)
+                    info = pl.get("info") or {}
+                    rec["ctx_limit"] = info.get("model_context_window") or rec["ctx_limit"]
+                    u = info.get("total_token_usage") or {}
+                    rec["total_tokens"] = max(rec["total_tokens"], u.get("total_tokens") or 0)
+                    last = info.get("last_token_usage") or {}
+                    rec["ctx_used"] = last.get("total_tokens") or rec["ctx_used"]
+                    rec["last_in"] = last.get("input_tokens") or rec["last_in"]
+                    rec["last_out"] = last.get("output_tokens") or rec["last_out"]
+            elif j.get("type") == "token_usage_record":
+                for key in ("thread_token_usage", "total_token_usage", "usage"):
+                    u = pl.get(key)
+                    if isinstance(u, dict) and isinstance(u.get("total_tokens"), int):
+                        rec["total_tokens"] = max(rec["total_tokens"], u["total_tokens"])
+                        break
+    rec["mtime"] = stat.st_mtime_ns
+    return rec
+
+
 def _codex_tail(path):
-    """Model, cumulative tokens and the newest rate-limit reading, from the end
-    of the file. Codex staples its own `rate_limits` block onto every
-    `token_count` event — the same numbers `/status` prints — so the last one
-    in the file is this account's latest utilisation."""
-    model, total, rate, rate_ts = "", 0, None, 0.0
-    try:
-        with open(path, "rb") as f:
-            size = os.fstat(f.fileno()).st_size
-            f.seek(max(0, size - 262144))
-            for line in f:
-                # No closing quote on the second needle: the record type is
-                # "token_usage_record", so '"token_usage"' never matched it.
-                # It also catches token_count, whose payload nests
-                # "total_token_usage" next to the rate limits we want.
-                if b'turn_context' in line or b'token_usage' in line:
-                    try:
-                        j = json.loads(line)
-                    except Exception:
-                        continue
-                    pl = j.get("payload") or {}
-                    if j.get("type") == "turn_context":
-                        model = pl.get("model") or model
-                    elif j.get("type") == "token_usage_record":
-                        # thread_token_usage is the running total for the whole
-                        # session; `usage` is just this response.
-                        for key in ("thread_token_usage", "total_token_usage", "usage"):
-                            u = pl.get(key)
-                            if isinstance(u, dict) and isinstance(u.get("total_tokens"), int):
-                                total = max(total, u["total_tokens"])
-                                break
-                    elif pl.get("type") == "token_count":
-                        rl = pl.get("rate_limits")
-                        if isinstance(rl, dict):
-                            rate, rate_ts = rl, _codex_ts(j)
-                        info = pl.get("info") or {}
-                        u = info.get("total_token_usage")
-                        if isinstance(u, dict) and isinstance(u.get("total_tokens"), int):
-                            total = max(total, u["total_tokens"])
-    except Exception:
-        pass
-    return model, total, rate, rate_ts
+    # Compatibility with callers of the original narrow statistics helper.
+    rec = _codex_read(path)
+    return rec["model"], rec["total_tokens"], rec["rate"], rec["rate_ts"]
 
 
 def codex_snapshot():
     global _codex_rate
     out = []
     _codex_rate = (None, 0.0)
-    if not os.path.isdir(CODEX_SESSIONS):
-        return out
     now = time.time()
     paths = glob.glob(os.path.join(CODEX_SESSIONS, "*", "*", "*", "rollout-*.jsonl"))
+    live = set()
     for path in paths:
         try:
             mtime = os.path.getmtime(path)
-        except Exception:
+            if now - mtime > 24 * 3600:
+                continue
+            live.add(path)
+            sid, cwd, meta_model, title = _codex_head(path)
+            if not sid:
+                continue
+            rec = _codex_read(path)
+        except (OSError, ValueError, TypeError):
             continue
-        if now - mtime > 24 * 3600:
+        if rec.get("internal"):
             continue
-        sid, cwd, meta_model, title = _codex_head(path)
-        if not sid:
-            continue
-        model, tokens, rate, rate_ts = _codex_tail(path)
-        if rate and rate_ts > _codex_rate[1]:
-            _codex_rate = (rate, rate_ts)
-        project = title or os.path.basename((cwd or "").rstrip("/")) or "codex"
-        out.append({
-            "sessionId": sid,
-            "name": project,
-            "cwd": cwd,
-            # The HUD's own vocabulary: busy means the reporter should treat it
-            # as running, anything else falls out of the active set.
-            "status": "busy" if now - mtime <= CODEX_BUSY_SECONDS else "idle",
-            "updatedAt": int(mtime * 1000),
-            "app": "codex",
-            "model": model or meta_model,
-            "total_tokens": tokens,
-        })
+        if rec["rate"] and rec["rate_ts"] > _codex_rate[1]:
+            _codex_rate = (rec["rate"], rec["rate_ts"])
+        row = {"sessionId": sid, "name": title or os.path.basename(cwd.rstrip("/")) or "codex",
+               "cwd": cwd, "updatedAt": int(mtime * 1000), "app": "codex"}
+        for key in ("status", "outcome", "model", "effort", "ctx_used", "ctx_limit",
+                    "last_in", "last_out", "total_tokens", "turns"):
+            row[key] = rec[key]
+        row["model"] = row["model"] or meta_model
+        # An abandoned process may never write an ending. After an hour with
+        # no evidence of activity, report uncertainty, never a successful end.
+        if row["status"] == "busy" and now - mtime > 3600:
+            row["status"], row["outcome"] = "unknown", "unknown"
+        out.append(row)
+    for cache in (_codex_meta, _codex_state):
+        for path in list(cache):
+            if path not in live:
+                del cache[path]
     return out
 
 
@@ -803,8 +851,11 @@ def codex_limits():
                            pct, severity, resets))
     if not items:
         return None
-    acct = _codex_account()
-    acct["plan"] = _codex_plan(rate)
+    # Rollout usage has no authenticated account identity. Never relabel an old
+    # reading with whoever happens to be in auth.json after an account switch.
+    account_id = rate.get("account_id")
+    acct = {"uuid": "codex:" + str(account_id) if account_id else "codex:unattributed:" + HOST,
+            "name": "Codex" if account_id else "Codex · account unverified", "plan": _codex_plan(rate)}
     return {"source": "codex-rollout", "provider": "openai", "fetched_at": ts,
             "retention_seconds": CODEX_RETENTION, "account": acct, "items": items}
 
@@ -812,7 +863,8 @@ def codex_limits():
 def payload():
     # Sessions first: the Codex scan is what picks up its rate-limit reading.
     codex = codex_snapshot()
-    body = {"host": HOST, "sessions": snapshot() + codex, "usage": usage_windows()}
+    body = {"host": HOST, "sessions": snapshot() + codex, "usage": usage_windows(),
+            "providers": ["claude", "codex"], "protocol": 2, "reporter_version": "0.2.0"}
     lim = limits()
     if lim:
         body["limits"] = lim

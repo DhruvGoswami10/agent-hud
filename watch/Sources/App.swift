@@ -3,10 +3,13 @@ import SwiftUI
 @main
 struct AgentHUDWatchApp: App {
     @StateObject private var hub = Hub()
+    @Environment(\.scenePhase) private var phase
 
     var body: some Scene {
         WindowGroup {
             RootView().environmentObject(hub).onAppear { hub.start() }
+                .onChange(of: phase) { _, value in if value == .active { hub.start() } else { hub.stop() } }
+                .onOpenURL { url in hub.pairingText = url.absoluteString; hub.pair() }
         }
     }
 }
@@ -23,6 +26,7 @@ struct RootView: View {
         TabView(selection: $tab) {
             SessionsView().tag(0)     // the main screen; tap a row for its dial
             WrappedView().tag(1)      // what the week actually looked like
+            PairingView().tag(3)
             LimitsView().tag(2)       // what's left in the tank
         }
         .tabViewStyle(.verticalPage)
@@ -38,11 +42,14 @@ struct SessionsView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
+                if !hub.reachable {
+                    Text(hub.connectionStatus).font(.caption2).foregroundStyle(.orange)
+                }
                 if hub.snap.sessions.isEmpty {
                     Text(hub.reachable ? "no sessions" : "can't reach the Mac")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                 }
-                ForEach(hub.snap.sessions.prefix(5), id: \.id) { s in
+                ForEach(hub.snap.sessions, id: \.id) { s in
                     NavigationLink(value: s) {
                         HStack(spacing: 8) {
                             // the same instrument, shrunk to a bullet
@@ -95,19 +102,20 @@ struct WrappedView: View {
         let w = hub.snap.wrapped
         ScrollView {
             VStack(alignment: .leading, spacing: 9) {
-                Text("LAST 7 DAYS")
+                Text("TOKEN ESTIMATES")
                     .font(.system(size: 9, weight: .bold))
                     .kerning(0.7)
                     .foregroundStyle(.secondary)
 
-                stat(Wrapped.short(w.week), "tokens burned", Color(red: 0.35, green: 0.65, blue: 1.0))
+                stat(Wrapped.short(w.week), "tokens · last 7 days", Color(red: 0.35, green: 0.65, blue: 1.0))
 
                 HStack(spacing: 8) {
-                    small(Wrapped.short(w.day), "today")
-                    small("\(w.turns)", "turns")
+                    small(Wrapped.short(w.day), "last 24 hours")
+                    small("\(w.turns)", "retained turns")
                 }
+                Text("RETAINED SESSIONS · EDIT ESTIMATES").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
                 HStack(spacing: 8) {
-                    small("\(w.files)", "files")
+                    small("\(w.files)", "edited files")
                     small("\(w.hosts)", w.hosts == 1 ? "machine" : "machines")
                 }
                 if w.added + w.removed > 0 {
@@ -121,7 +129,7 @@ struct WrappedView: View {
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                 }
                 if !w.peakHour.isEmpty {
-                    Text("busiest at \(w.peakHour) · \(Wrapped.short(w.peakTokens))")
+                    Text("24h peak at \(w.peakHour) · \(Wrapped.short(w.peakTokens))")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
@@ -161,7 +169,7 @@ struct LimitsView: View {
     @EnvironmentObject var hub: Hub
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
+        ScrollView { VStack(alignment: .leading, spacing: 11) {
             if hub.snap.limits.isEmpty {
                 Text("no live limits").font(.system(size: 12)).foregroundStyle(.secondary)
             } else {
@@ -170,6 +178,7 @@ struct LimitsView: View {
                     .foregroundStyle(.secondary)
                 ForEach(hub.snap.limits) { l in
                     VStack(alignment: .leading, spacing: 3) {
+                        Text(l.account.isEmpty ? l.provider : l.account).font(.system(size: 9)).foregroundStyle(.secondary)
                         HStack {
                             Text(l.label).font(.system(size: 12, weight: .semibold))
                             Spacer()
@@ -195,5 +204,23 @@ struct LimitsView: View {
         }
         .padding(.horizontal, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        }
+    }
+}
+
+struct PairingView: View {
+    @EnvironmentObject var hub: Hub
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("PAIR MAC").font(.headline)
+                Text("On the Mac: Agent HUD Settings → Connections → Copy Watch pairing link.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                SecureField("Pairing link", text: $hub.pairingText)
+                Button("Pair") { hub.pair() }
+                Text(hub.connectionStatus).font(.caption2)
+                Text("Same Wi-Fi network. Refreshes while this app is open.").font(.caption2).foregroundStyle(.secondary)
+            }.padding(.horizontal, 6)
+        }
     }
 }

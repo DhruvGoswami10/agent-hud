@@ -41,15 +41,54 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 struct SettingsView: View {
     @ObservedObject var state: AppState
     @ObservedObject private var updater = Updater.shared
+    @ObservedObject private var watch = WatchBridge.shared
 
     var body: some View {
         TabView {
             timingTab.tabItem { Label("Timing", systemImage: "timer") }
             appearanceTab.tabItem { Label("General", systemImage: "sparkles") }
             awakeTab.tabItem { Label("Keep Awake", systemImage: "cup.and.saucer") }
+            connectionsTab.tabItem { Label("Connections", systemImage: "link") }
             updatesTab.tabItem { Label("Updates", systemImage: "arrow.down.circle") }
         }
         .frame(width: 520, height: 620)
+    }
+
+    private var connectionsTab: some View {
+        Form {
+            Section("Browser bridge") {
+                Text("Copy your pairing key, then paste it into the Agent HUD Bridge extension’s popup. Each browser needs to be paired once.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("Copy pairing key") { state.copyBrowserPairingKey() }
+            }
+            Section("Apple Watch") {
+                Toggle("Allow Watch connections on this network", isOn: Binding(
+                    get: { watch.enabled }, set: { watch.setEnabled($0) }))
+                Text(watch.status).font(.caption).foregroundStyle(.secondary)
+                if watch.enabled {
+                    Button("Copy Watch pairing link") { watch.copyPairingLink() }
+                        .disabled(watch.pairingLink.isEmpty)
+                    Text("Paste this link in the Watch app’s Pair Mac screen. Connections are encrypted and read-only. The Watch refreshes while its app is open.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Section("Connection health") {
+                LabeledContent("Listener", value: state.listenerStatus)
+                LabeledContent("Local reporter", value: state.reporterStatus)
+                LabeledContent("Notifications", value: state.notificationPermission)
+                LabeledContent("Prevent idle lock", value: Caffeine.shared.jiggleAuthorized ? "Allowed" : "Accessibility permission required")
+                if !state.reporterProblem.isEmpty {
+                    Text(state.reporterProblem).font(.caption).textSelection(.enabled)
+                }
+            }
+            Section("Remote reporters") {
+                ForEach(state.reporterVersions.keys.sorted(), id: \.self) { host in
+                    LabeledContent(HostAliases.display(host), value: state.reporterVersions[host] ?? "unknown")
+                }
+                Text("Update configured remote reporters with bin/agent-hud-bootstrap HOST. Older reporters are marked legacy.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }.formStyle(.grouped)
     }
 
     // MARK: - Timing
@@ -111,7 +150,7 @@ struct SettingsView: View {
                 if let problem = state.loginItemProblem {
                     Text(problem).font(.caption).foregroundStyle(.orange)
                 }
-                Text("If you quit Agent HUD, start it again from Spotlight (\u{201C}AgentHUD\u{201D}), or run \u{201C}make run\u{201D} in ~/agent-hud. Turning this on brings it back after every restart.")
+                Text("If you quit Agent HUD, start it again from Spotlight (\u{201C}AgentHUD\u{201D}), or run \u{201C}make run\u{201D} from your source checkout. Turning this on brings it back after every restart.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("The notch at rest") {
@@ -202,9 +241,18 @@ struct SettingsView: View {
                 }
                 Toggle("Keep the screen on during a manual hold", isOn: $state.keepScreenOn)
                 Text(state.keepScreenOn
-                     ? "The display stays lit and the idle lock is held off."
+                     ? "The display stays lit. Preventing idle lock also requires Accessibility permission."
                      : "The Mac stays up but the screen is allowed to sleep.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+            if !Caffeine.shared.jiggleAuthorized {
+                Section("Idle lock permission") {
+                    Text("Keeping the display on works. Resetting the idle timer requires Accessibility access.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Open Accessibility Settings") {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+                    }
+                }
             }
             Section("While agents work") {
                 Toggle("Stay awake automatically", isOn: $state.autoAwake)
@@ -265,15 +313,15 @@ struct SettingsView: View {
                 if updater.updateAvailable, let latest = updater.latest {
                     Text("\(latest) is available.").font(.callout)
                 }
-                Text("Agent HUD runs from the repo it was built in — the hooks, the reporter and the tunnel keeper all live beside it — so updating means updating the clone:")
+                Text("For a downloaded app, quit Agent HUD and replace it with the latest release. The reporter is included. Source installations can use the command below:")
                     .font(.caption).foregroundStyle(.secondary)
-                Text("cd ~/agent-hud && bin/agent-hud-update")
+                Text("bin/agent-hud-update")
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
                 Button("Copy that command") {
                     let pb = NSPasteboard.general
                     pb.clearContents()
-                    pb.setString("cd ~/agent-hud && bin/agent-hud-update", forType: .string)
+                    pb.setString("bin/agent-hud-update", forType: .string)
                 }
             }
         }

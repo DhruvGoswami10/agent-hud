@@ -15,19 +15,23 @@ targets:
       path: Info.plist
       properties:
         CFBundleDisplayName: Agent HUD
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         WKApplication: true
         WKWatchOnly: true
         UILaunchStoryboardName: ""
-        # The Mac HUD serves plain HTTP on loopback; the simulator shares the
-        # host's network stack, so 127.0.0.1 here is the Mac itself.
+        CFBundleURLTypes:
+          - CFBundleURLName: AgentHUDPairing
+            CFBundleURLSchemes: [agenthud]
+        NSLocalNetworkUsageDescription: Connect securely to your paired Mac to show agent activity.
+        # TLS with an explicitly paired certificate on local network hosts.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
-          NSAllowsArbitraryLoads: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.dhruv.agenthud.watch
-        MARKETING_VERSION: "0.1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "0.2.0"
+        CURRENT_PROJECT_VERSION: "2"
         GENERATE_INFOPLIST_FILE: NO
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "4"

@@ -213,7 +213,7 @@ final class StatusItemController: NSObject {
     @objc private func toggleEdgeSide() { state.edgeSide = state.edgeSide == .left ? .right : .left }
     @objc private func toggleMusic() { state.musicEnabled.toggle() }
     @objc private func toggleMute() { state.muted.toggle() }
-    @objc private func toggleAwake() { state.keepAwake.toggle() }
+    @objc private func toggleAwake() { if state.keepAwake { state.releaseAwakeHold() } else { state.holdAwake(minutes: 0) } }
     @objc private func toggleAutoAwake() { state.autoAwake.toggle() }
 
     @objc private func pickAnim(_ sender: NSMenuItem) {

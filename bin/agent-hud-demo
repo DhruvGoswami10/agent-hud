@@ -26,7 +26,7 @@ def post(path, obj):
 def session(sid, name, cwd, ctx, **extra):
     d = {"sessionId": sid, "name": name, "cwd": cwd, "status": "busy",
          "updatedAt": int(time.time() * 1000), "model": "claude-opus-5",
-         "effort": "high", "ctx_used": ctx, "last_in": ctx - 2000, "last_out": 1800}
+         "effort": "high", "ctx_used": ctx, "ctx_limit": 200000, "last_in": ctx - 2000, "last_out": 1800}
     d.update(extra)
     return d
 
@@ -68,8 +68,7 @@ def main():
                     top_file="handlers.rs"),
         ],
         "usage": {"h5": 190000, "d7": 900000, "h5_peak": 300000, "hours": {}},
-        # Two accounts, not three: the panel is a fixed height, and a third
-        # card pushes the burn strip off the bottom.
+        # A second provider shares the same bounded, scrollable panel.
         "limits_extra": [account("codex-acct", "Business",
                                  [("primary", "Week", 18, "normal", week)],
                                  provider="openai", source="codex-rollout")],

@@ -15,3 +15,7 @@ watch/build/
 .agents/
 .claude/
 skills-lock.json
+
+safari/build/
+__pycache__/
+*.pyc

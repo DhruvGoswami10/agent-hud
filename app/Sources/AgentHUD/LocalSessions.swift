@@ -22,13 +22,15 @@ struct LocalSessionEntry {
     var app: String = ""
     var totalTokens: Int = 0
     var turns: Int = 0
+    var ctxLimit: Int = 0
+    var focus: SessionFocus = SessionFocus()
 
     var isActive: Bool { status == "busy" || status == "shell" }
 }
 
 /// One real rate-limit window as Anthropic reports it (session / weekly /
 /// per-model). Percentages are truth, not our token estimates.
-struct LimitItem: Identifiable {
+struct LimitItem: Identifiable, Equatable {
     var id: String { kind + label }
     let kind: String
     let label: String
@@ -40,7 +42,7 @@ struct LimitItem: Identifiable {
     var isWarning: Bool { severity == "warning" || (percent >= 75 && !isCritical) }
 }
 
-struct AccountLimits: Identifiable {
+struct AccountLimits: Identifiable, Equatable {
     let key: String           // account uuid (or email) — one card per account
     let source: String        // api | ccstatusline | claude.json | codex-rollout
     let fetchedAt: Date
@@ -105,4 +107,6 @@ struct RegistryReport {
     var hours: [Int: Int] = [:]
     /// One entry per assistant the machine is logged into (Claude, Codex …).
     var limits: [AccountLimits] = []
+    var providers: Set<String> = ["claude", "codex"]
+    var reporterVersion: String = "legacy"
 }

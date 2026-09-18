@@ -1,78 +1,31 @@
-// Agent HUD bridge: Claude web activity -> HUD agent events.
+// DOM adapter: observations are debounced and navigation is never a success.
 (() => {
-  let generating = false;
-
-  // One id per run, latched when the run starts: claude.ai rewrites /new to
-  // /chat/<uuid> mid-stream, so re-reading the pathname on every send would
-  // split running and done across two session cards (the /new one stuck
-  // "working" until the HUD times it out). /new can't be latched verbatim
-  // either — it isn't a conversation, it's the door they all come through, and
-  // every new chat would pile onto one shared card. A real path latches as
-  // itself; a placeholder latches as a one-off id nothing else can collide
-  // with, which is all the run needs to keep its own heartbeats and 'done'
-  // together.
-  let sessionId = "";
-  // The run's page and name, tracked while it streams. The title has to stay
-  // live — claude.ai names a new chat mid-run — but reading it at send time is
-  // what renames the wrong card: switching conversations ends the run on that
-  // very tick, and by then document.title belongs to the chat you left for.
-  let sessionPath = "";
-  let sessionName = "";
-
-  function runId() {
-    const p = location.pathname;
-    return /^\/chat\/[^/]+/.test(p)
-      ? "claude-" + p
-      : "claude-new-" + Math.random().toString(36).slice(2);
-  }
-
-  function isGenerating() {
-    return !!document.querySelector(
-      '[data-is-streaming="true"], button[aria-label*="Stop response"], button[aria-label*="Stop Response"]'
-    );
-  }
-
-  function chatTitle() {
-    const t = document.title.replace(/ [-–] Claude$/, "").trim();
-    return t && t !== "Claude" ? t : "New chat";
-  }
-
-  function send(kind, msg) {
-    try {
-      chrome.runtime.sendMessage({
-        type: "hud",
-        path: "/event",
-        body: {
-          event: kind,
-          host: "web",
-          project: "Claude",
-          session_id: sessionId || runId(),
-          session_name: sessionName || chatTitle(),
-          message: msg,
-          hook: "browser",
-        },
-      }, () => { void chrome.runtime.lastError; });
-    } catch (e) { /* extension reloading */ }
-  }
-
-  // Heartbeat while streaming (~30s): a closed tab stops sending, and the
-  // HUD demotes silent web cards instead of showing "working" forever.
-  let lastBeat = 0;
+  const stopSelector = '[data-is-streaming="true"], button[aria-label*="Stop response"], button[aria-label*="Stop Response"]';
+  let aliases = {};
+  try { aliases = JSON.parse(sessionStorage.getItem("agent-hud-conversations") || "{}"); } catch {}
+  const tracker = new HUDChatLifecycle({
+    provider: 'claude',
+    canonical: (path) => /^\/chat\/[^/]+/.test(path) ? path : "",
+    aliases,
+    remember: (value) => { try { sessionStorage.setItem("agent-hud-conversations", JSON.stringify(value)); } catch {} },
+    send: (body) => {
+      try { chrome.runtime.sendMessage({ type: "hud", path: "/event", body },
+        () => { void chrome.runtime.lastError; }); } catch {}
+    },
+  });
+  document.addEventListener("click", (event) => {
+    if (event.target?.closest?.(stopSelector)) tracker.interrupted = true;
+  }, true);
+  addEventListener("pagehide", () => tracker.stop("unknown", "Tab closed · completion unconfirmed"));
   setInterval(() => {
-    const g = isGenerating();
-    if (g && !generating) sessionId = runId(); // new run: latch its id
-    // Follow the run's own page: it may rewrite /new to /chat/<uuid> under us,
-    // and while we're still on it the title is worth re-reading. Once we're
-    // somewhere else the last one we saw is the only honest answer.
-    if (g || location.pathname === sessionPath) {
-      sessionPath = location.pathname;
-      sessionName = chatTitle();
-    }
-    if (g && (!generating || Date.now() - lastBeat > 30000)) {
-      send("running", "generating…");
-      lastBeat = Date.now();
-    }
-    if (!g && generating) send("done", "response finished");
-    generating = g;
+    const title = document.title.replace(/ [-–] Claude$/, "").trim();
+    tracker.tick({ path: location.pathname, url: location.href,
+      title: title && title !== 'Claude' ? title : "New chat",
+      generating: !!document.querySelector(stopSelector),
+      // Site markup is not a stable completion contract. Until a site exposes
+      // a reliable terminal marker, stopping is explicitly unconfirmed.
+      completed: false,
+      error: !!document.querySelector('[data-testid="conversation-error"], [data-testid="error-message"]'),
+    });
   }, 1000);
 })();

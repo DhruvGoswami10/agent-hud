@@ -1,7 +1,4 @@
 name: CI
-
-# Every push and PR runs the same suite as `make test` — the failures list on
-# the Actions tab is the "what needs fixing" report for the upload.
 on:
   push:
     branches: [main]
@@ -12,9 +9,17 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - name: Swift tests
-        run: cd app && swift test
-      - name: Script tests
-        run: python3 tests/test_scripts.py
-      - name: Extension tests
+      - name: Swift tests and warning-free release build
+        run: |
+          swift test --package-path app -Xswiftc -warnings-as-errors
+          swift build --package-path app -c release -Xswiftc -warnings-as-errors
+      - name: Script and TLS relay tests
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Browser adapter tests
         run: node tests/test_extension.mjs
+      - name: Build Safari bridge
+        run: xcodebuild -project 'safari/Agent HUD Bridge/Agent HUD Bridge.xcodeproj' -scheme 'Agent HUD Bridge' -configuration Release -derivedDataPath safari/build CODE_SIGNING_ALLOWED=NO build
+      - name: Build Watch companion
+        run: |
+          command -v xcodegen || brew install xcodegen
+          make watch

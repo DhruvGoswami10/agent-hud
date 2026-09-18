@@ -55,7 +55,7 @@ def tool_use_line(name, inp):
         "type": "assistant",
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
         "message": {"model": "claude-fable-5",
-                    "content": [{"type": "tool_use", "name": name, "input": inp}]},
+                    "content": [{"type": "tool_use", "id": name, "name": name, "input": inp}]},
     })
 
 
@@ -244,6 +244,9 @@ class RegistryTests(unittest.TestCase):
                                    "old_string": "a", "new_string": "x\ny\nz"}),
             tool_use_line("Write", {"file_path": "/p/New.swift",
                                     "content": "1\n2\n3\n4\n5"}),
+            json.dumps({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "Edit", "content": "ok"},
+                {"type": "tool_result", "tool_use_id": "Write", "content": "ok"}]}}),
         ])
         self.addCleanup(fx.cleanup)
         s = self.snapshot(fx)["sessions"][0]
@@ -356,8 +359,8 @@ class CodexLimitsTests(unittest.TestCase):
         self.write([token_count_line(4.0)])
         lim = self.mod.codex_limits()
         self.assertEqual(lim["provider"], "openai")
-        self.assertEqual(lim["account"]["uuid"], "codex:acct-1")
-        self.assertEqual(lim["account"]["name"], "me@example.com")
+        self.assertTrue(lim["account"]["uuid"].startswith("codex:unattributed:"))
+        self.assertEqual(lim["account"]["name"], "Codex · account unverified")
         self.assertEqual(lim["account"]["plan"], "Business Prolite")
         self.assertEqual(len(lim["items"]), 1)
         item = lim["items"][0]
@@ -543,7 +546,8 @@ class CursorInstallTests(unittest.TestCase):
                                capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
 
-        cfg = json.load(open(path))
+        with open(path) as f:
+            cfg = json.load(f)
         cmds = [h.get("command", "") for h in cfg["hooks"]["stop"]]
         self.assertIn("mine.sh", cmds, "existing hooks must not be removed")
         self.assertEqual(sum("agent-hud-cursor" in c for c in cmds), 1,

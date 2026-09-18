@@ -1,0 +1,6 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Pair Agent HUD</title>
+<style>body{font:14px system-ui;width:300px;padding:16px;background:#17191e;color:#eee}h1{font-size:18px}input,button{box-sizing:border-box;width:100%;padding:10px;margin-top:10px;border-radius:7px;border:1px solid #666}button{background:#bdd5ff;color:#172132;cursor:pointer}p{line-height:1.5}#status{min-height:2em}</style></head>
+<body><h1>Agent HUD Bridge</h1><p>In Agent HUD Settings → Connections, copy the pairing key and paste it here.</p>
+<form id="pair"><label for="key">Pairing key</label><input id="key" type="password" autocomplete="off" required minlength="64" maxlength="64"><button>Pair this browser</button></form>
+<p id="status" role="status"></p><script src="pair.js"></script></body></html>

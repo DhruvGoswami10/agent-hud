@@ -1,6 +1,43 @@
 import AppKit
 import SwiftUI
 import CoreImage
+import CryptoKit
+
+func sessionKey(host: String, app: String, sessionId: String, project: String = "") -> String {
+    let provider = app.isEmpty || app == "claude" ? "" : app + ":"
+    return "\(host)#\(provider)\(sessionId.isEmpty ? project : sessionId)"
+}
+
+enum SessionOutcome: String {
+    case finished, interrupted, error, unknown
+
+    var label: String {
+        switch self {
+        case .finished: return "finished"
+        case .interrupted: return "interrupted"
+        case .error: return "ended with an error"
+        case .unknown: return "status unavailable"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .finished: return EventKind.done.color
+        case .interrupted: return .orange
+        case .error: return .red
+        case .unknown: return .gray
+        }
+    }
+
+    static func from(_ raw: String?, message: String) -> SessionOutcome {
+        if let raw, let value = Self(rawValue: raw) { return value }
+        let text = message.lowercased()
+        if text.hasPrefix("interrupted") { return .interrupted }
+        if text.hasPrefix("ended with an error") { return .error }
+        if text == "lost contact" || text == "session ended" { return .unknown }
+        return .finished // legacy explicit Stop/notify events
+    }
+}
 
 /// Prefer the session's real name; if it's still Claude Code's auto-generated
 /// "<user>-<xx>" fallback, show the project folder instead when that's more
@@ -74,7 +111,7 @@ enum HostAliases {
 
     /// Merge aliases recorded by agent-hud-bootstrap for newly seen boxes.
     static func reload() {
-        let p = ("~/agent-hud/hosts.json" as NSString).expandingTildeInPath
+        let p = SupportPaths.config("hosts.json").path
         guard let data = FileManager.default.contents(atPath: p),
               let j = (try? JSONSerialization.jsonObject(with: data)) as? [String: String] else { return }
         for (k, v) in j { map[k] = v }
@@ -143,6 +180,8 @@ struct AgentEvent: Identifiable {
     var model: String = ""
     /// Which tool reported this — "claude" (default), "cursor", a browser tab.
     var app: String = ""
+    var outcome: SessionOutcome = .finished
+    var focus: SessionFocus = SessionFocus()
     let image: NSImage?
     let ts: Date
 
@@ -151,14 +190,14 @@ struct AgentEvent: Identifiable {
         let h = HostAliases.display(host)
         return name.isEmpty ? h : "\(h) · \(name)"
     }
-    var sourceKey: String { "\(host)#\(sessionId.isEmpty ? project : sessionId)" }
+    var sourceKey: String { sessionKey(host: host, app: app, sessionId: sessionId, project: project) }
 
     /// Same event under a different host label — used to canonicalize the
     /// local machine's several names into one identity at ingestion.
     func with(host newHost: String) -> AgentEvent {
         AgentEvent(kind: kind, host: newHost, project: project, sessionId: sessionId,
                    sessionName: sessionName, message: message, hook: hook,
-                   model: model, app: app, image: image, ts: ts)
+                   model: model, app: app, outcome: outcome, focus: focus, image: image, ts: ts)
     }
 
     static func from(json: [String: Any]) -> AgentEvent? {
@@ -177,10 +216,12 @@ struct AgentEvent: Identifiable {
             project: (json["project"] as? String) ?? "",
             sessionId: (json["session_id"] as? String) ?? "",
             sessionName: (json["session_name"] as? String) ?? "",
-            message: ((json["message"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
+            message: cleanSessionMessage((json["message"] as? String) ?? ""),
             hook: (json["hook"] as? String) ?? "",
             model: (json["model"] as? String) ?? "",
-            app: (json["app"] as? String) ?? "",
+            app: (json["app"] as? String) ?? (json["hook"] == nil ? "generic" : "claude"),
+            outcome: .from(json["outcome"] as? String, message: (json["message"] as? String) ?? ""),
+            focus: SessionFocus(json: json["focus"] as? [String: Any] ?? [:], cwd: json["cwd"] as? String ?? ""),
             image: image,
             ts: Date()
         )
@@ -198,7 +239,7 @@ struct SessionInfo: Identifiable, Equatable {
     var model: String = ""
     var effort: String = ""
     var ctxUsed: Int = 0
-    var ctxLimit: Int = 200_000
+    var ctxLimit: Int = 0
     var lastIn: Int = 0
     var lastOut: Int = 0
     var app: String = ""
@@ -208,9 +249,13 @@ struct SessionInfo: Identifiable, Equatable {
     var topFile: String = ""
     var totalTokens: Int = 0
     var turns: Int = 0
+    var outcome: SessionOutcome = .finished
+    var focus: SessionFocus = SessionFocus()
+    var statusColor: Color { kind == .done ? outcome.color : kind.color }
+    var statusLabel: String { kind == .done ? outcome.label : kind.verb }
 
     /// Sessions on [1m] models exceed the standard 200k window; infer it.
-    var effectiveCtxLimit: Int { ctxUsed > 220_000 ? 1_000_000 : ctxLimit }
+    var effectiveCtxLimit: Int { ctxLimit }
 
     /// Registry and hook sources are Claude Code; browser tabs say who they are.
     var provider: Provider {
@@ -220,7 +265,7 @@ struct SessionInfo: Identifiable, Equatable {
     }
 
     var ctxFraction: Double? {
-        guard ctxUsed > 0 else { return nil }
+        guard ctxUsed > 0, ctxLimit > 0 else { return nil }
         return min(1, Double(ctxUsed) / Double(effectiveCtxLimit))
     }
 
@@ -246,6 +291,7 @@ struct ClipboardItem: Identifiable {
     var imageData: Data? = nil
     var imageType: String = ""
     var fileURLs: [URL] = []
+    var isRestorable: Bool = true
 }
 
 /// Content fingerprint used to ignore re-copies of identical content. Apps
@@ -253,11 +299,20 @@ struct ClipboardItem: Identifiable {
 /// changes — routine when moving between displays — which bumps changeCount
 /// without the content actually changing.
 func clipboardSignature(kind: ClipboardItem.Kind, text: String, data: Data?) -> String {
-    switch kind {
-    case .text: return "t:\(text)"
-    case .file: return "f:\(text)"
-    case .image: return "i:\(data?.count ?? 0):\(data?.hashValue ?? 0)"
+    let bytes = data ?? Data(text.utf8)
+    let hash = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+    return "\(kind):\(hash)"
+}
+
+func cleanSessionMessage(_ text: String) -> String {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.hasPrefix("<task-notification>") {
+        if let range = trimmed.range(of: "(?<=<summary>)[\\s\\S]*?(?=</summary>)", options: .regularExpression) {
+            return String(trimmed[range].prefix(300))
+        }
+        return "Background task updated"
     }
+    return String(trimmed.prefix(1000))
 }
 
 enum PeekContent {

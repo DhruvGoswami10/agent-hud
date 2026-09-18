@@ -3,16 +3,19 @@
 // Local Network Access), but an extension worker with host_permissions can.
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === "hud") {
-    const opts = msg.body
-      ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(msg.body) }
-      : {};
-    // ok mirrors the HTTP status, not merely "the body parsed": a 404 whose
-    // body happens to be JSON used to read as success, so the caller never
-    // backed off and hammered the HUD.
-    fetch("http://127.0.0.1:48085" + msg.path, opts)
-      .then((r) => r.json().catch(() => null).then((data) => ({ r, data })))
-      .then(({ r, data }) => sendResponse({ ok: r.ok, status: r.status, data }))
-      .catch(() => sendResponse({ ok: false }));
+    if (!/^\/(event|health|music\/state|music\/commands)(\?.*)?$/.test(msg.path || "")) {
+      sendResponse({ ok: false, status: 400 }); return;
+    }
+    chrome.storage.local.get("pairingKey", ({ pairingKey }) => {
+      if (!pairingKey) { sendResponse({ ok: false, status: 401, pairingRequired: true }); return; }
+      const headers = { "Content-Type": "application/json", "X-Agent-HUD-Token": pairingKey,
+        "X-Agent-HUD-Client": "browser" };
+      const opts = msg.body ? { method: "POST", headers, body: JSON.stringify(msg.body) } : { headers };
+      fetch("http://127.0.0.1:48085" + msg.path, opts)
+        .then((r) => r.json().catch(() => null).then((data) => ({ r, data })))
+        .then(({ r, data }) => sendResponse({ ok: r.ok, status: r.status, data }))
+        .catch(() => sendResponse({ ok: false }));
+    });
     return true; // keep the message channel open for the async response
   }
   if (msg && msg.type === "tabId") {

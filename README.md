@@ -10,10 +10,10 @@
 
 ──────────────────────────────────────────────────────────────────────────
 
-  ⚡  Claude Code everywhere — this Mac, your SSH boxes, browser tabs
+  ⚡  Claude, Codex, Cursor — this Mac, SSH boxes, browser tabs
   ●  live sessions with real names, context %, model & effort
   ▎▎  the side bars — pulsing blue means working, orange needs you
-  ✓  truthful endings: finished, interrupted, or errored — never a lie
+  ✓  distinct outcomes: finished, interrupted, error, or unavailable
   ☕  keep-awake that knows when agents are working
   ♪  your music in the notch — Spotify, Apple Music, even YouTube
 
@@ -22,204 +22,202 @@
 
 # Agent HUD
 
-<p align="center">
-  <img src="assets/notch.gif" alt="An agent asks to run a command, the notch turns orange and slides out; it finishes and the slide-out turns green" width="760">
-</p>
+A small macOS status panel for Claude Code, Codex, Cursor, browser chats, and
+other jobs that can send JSON. It lives beside the MacBook notch or on an edge
+of an external display. Hover to inspect sessions; click a recorded source
+location to return to the work.
 
-A notch-style HUD for AI agents. A black panel hugs the MacBook notch (a side
-notch on displays that have none) and slides out when:
+<p align="center"><img src="assets/notch.gif" alt="Agent activity beside the MacBook notch" width="760"></p>
 
-- a **Claude Code agent finishes a turn** (green, shows the final reply snippet)
-- an agent **needs approval / input** (orange, sticky, counts pending items)
-- a **prompt starts running** (blue, brief)
-- you **copy text or an image** (clipboard preview)
+**Version 0.2.0** is the reliability release. See [CHANGELOG.md](CHANGELOG.md)
+and the [audit resolution notes](docs/reliability-release.md).
 
-Events come from Claude Code **hooks** (`UserPromptSubmit`, `Notification`,
-`Stop`) on any machine — local, or a VM you SSH into. Remote machines POST to
-`127.0.0.1:48085`, which an SSH reverse tunnel carries back to the Mac, so the
-same forwarder script works everywhere.
+## Install
 
-```
-Claude Code hook (Mac or VM)
-  └─ bin/agent-hud-send  ──POST /event──▶  AgentHUD.app listener :48085
-                                             ├─ notch slide-out + feed
-                                             ├─ menu bar state icon
-                                             ├─ macOS notification + sound
-                                             └─ clipboard previews (local watcher)
-```
+Download `AgentHUD.app.zip` from [Releases](https://github.com/DhruvGoswami10/agent-hud/releases),
+unzip, and move AgentHUD.app to Applications. macOS 14 or newer is required.
+The Mac app includes its reporter and integration scripts; **Python 3.9+** must
+be available on PATH. Release builds are ad-hoc signed, not Apple notarized.
+If Gatekeeper blocks a download, use System Settings → Privacy & Security →
+Open Anyway after checking its source and the release checksums.
 
-## The panel
-
-Hover the notch and it opens: every session across every machine, real rate
-limits per account, what changed this session, and the last 48 hours of burn.
-
-<p align="center">
-  <img src="assets/panel.png" alt="The open panel: rate limits for a Claude account and a Codex account, three live sessions, the selected session's context and diff, and a 48-hour burn strip" width="860">
-</p>
-
-<sub>Screenshots are staged with synthetic sessions (<code>make demo</code>) — the
-numbers and names are examples, not anyone's real work.</sub>
-
-## Build & run (Mac)
+Install the integrations you use:
 
 ```sh
-make run          # swift build, bundle dist/AgentHUD.app, launch
-make hooks        # add forwarder hooks to ~/.claude/settings.json (backs up first)
-make test         # Swift + Python test suites
+python3 '/Applications/AgentHUD.app/Contents/Resources/bin/install-hooks.py'
+python3 '/Applications/AgentHUD.app/Contents/Resources/bin/install-hooks.py' --codex --with-hooks
+python3 '/Applications/AgentHUD.app/Contents/Resources/bin/install-hooks.py' --cursor
 ```
 
-First run: macOS will ask once for **notification** permission, and the first
-clipboard read triggers the **pasteboard privacy** prompt — choose Always Allow.
+The installer makes backups only when configuration changes. It preserves other
+hooks and chains the previous Codex notifier. Invalid configuration is left
+untouched. Restart existing agent sessions after installing; reload Cursor.
+Review and trust the optional Codex lifecycle hooks with `/hooks` in Codex.
+They observe events and never approve, deny, or continue an agent action.
 
-Already-running Claude Code sessions snapshot their hooks at startup; they start
-reporting after a restart. New sessions report immediately.
-
-## Interactions
-
-- Event arrives → panel slides out, auto-collapses (approval events stay longer
-  and leave an orange count on the collapsed pill).
-- Hover the notch → full panel: sessions by state, recent events, clipboard
-  history (click a chip to copy it back).
-- Menu bar sparkle icon = aggregate state (orange approval / blue running /
-  green recent done). Menu has toggles + "Send Test Event".
-
-## No notch? Lid closed, external display
-
-With no notch on any attached screen — a MacBook in clamshell mode, or
-external-only — the HUD moves to a **side edge**: the notch turned on its
-side. On a wide display the top-centre is exactly where the browser keeps its
-tabs, so nothing lives there.
-
-- At rest it's a 5 pt sliver in the scrollbar gutter (or nothing at all, with
-  the resting indicator off). Running news lights a 14 pt silhouette; a review
-  gets the full 18 pt. It shrinks back after.
-- Peeks slide inward from the edge; the full panel opens as a drawer at
-  mid-height — never near the tab strip.
-- Hover or click the edge at mid-height to open, exactly like the notch.
-- Drag the side notch up or down the edge to put it where you want it; it
-  stays there (there's a slider in Settings too).
-- Settings → *Without a notch*: right or left edge, notch or bar grip (the bar
-  is the side-indicator bars moved to the edge, one segment per running
-  session), or opt back into the old top-centre pill.
-- Open the lid and the notch wins again; it follows display changes live.
-
-Try it on the MacBook's own screen with `make playground-edge` (`EDGE=left`
-to flip sides).
-
-## Quitting and starting again
-
-`Quit Agent HUD` stops the app. Nothing breaks while it's off — the hooks still
-fire, they just fail instantly (a refused loopback port costs ~30ms) and no
-events are recorded until it's back.
-
-To start it again, any of:
+For a source checkout:
 
 ```sh
-open ~/agent-hud/dist/AgentHUD.app    # or Spotlight: "AgentHUD"
-make run                              # rebuilds first
+make run             # Swift release build, bundle, launch
+make hooks           # Claude Code
+make hooks-codex      # Codex notify + observational lifecycle hooks
+make hooks-cursor    # Cursor
+make test            # Swift, Python, browser regression suites
 ```
 
-Or turn on **Open at Login** (menu bar, or Settings › General) and it comes back
-by itself after every restart.
+Building requires Xcode Command Line Tools / Swift 5.9+, Python 3.9+, and Node
+for browser tests. Full Xcode is required to build Safari or Watch targets.
 
-## Settings
+## What the panel means
 
-`Settings…` in the menu bar (or ⌘,) opens four tabs:
+- Blue: working. Orange: needs attention. Green: an explicitly successful finish.
+  Interrupted, error, and unavailable outcomes have separate labels and colors.
+- Claude and Codex registry snapshots own their respective sessions; they cannot
+  end an unrelated Cursor task or an explicitly named generic integration.
+- Codex lifecycle comes from rollout records and optional hooks. A quiet file
+  does not mean success; an hour without activity becomes unavailable.
+  Rollouts are an internal format, so unknown formats
+  remain unknown rather than being guessed into completion.
+- Context percentages appear only when the source reports a capacity. Otherwise
+  the panel shows tokens used and says capacity is unavailable.
+- Rate limits show their observation time. Codex rollout readings without an
+  authenticated account ID are labeled **account unverified**, never attributed
+  to whoever happens to be signed in later.
+- Editing activity is an estimate from successful Edit/Write tool results. It is
+  not a Git diff; repeated edits can count again, and shell edits are not included.
+- Session and account overflow scrolls within a bounded panel. Music and clipboard
+  controls remain below that scroll area. Clear event history leaves sessions intact.
 
-- **Timing** — how long each slide-out stays (needs-you, done, clipboard,
-  music), whether a click dismisses one, the ⌥⎋ dismiss-from-anywhere hot key,
-  and how forgiving the hover is before the panel retracts.
-- **Appearance** — the resting indicator (the notch is invisible when idle by
-  default; turn this on for a dim mark that says it's alive), side bars,
-  alerts, animation.
-- **Keep Awake** — timed holds (15m / 30m / 1h / 2h / indefinitely) with a
-  live countdown, whether a manual hold keeps the screen lit or only stops the
-  machine sleeping, and the automatic hold while agents work.
-- **Updates** — the running version, a check against the newest release, and
-  a switch to stop checking.
+<p align="center"><img src="assets/panel.png" alt="Staged Agent HUD panel with synthetic accounts and sessions" width="860"></p>
 
-A slide-out goes away on the first click, or with **⌥⎋** from any app.
+Screenshots use invented data (`make demo`). The older screenshot illustrates
+the visual style; 0.2.0 adds scrolling and more precise status labels.
 
-## Updating
+## Clipboard, music, and keep-awake
 
-```sh
-bin/agent-hud-update     # or: make update
-```
+Clipboard history ignores concealed, transient, and generated clipboard data.
+Re-copying restores original whitespace, text, file URLs, or image bytes.
+Large entries that exceed the in-memory history limit say **Preview only** and
+cannot overwrite the clipboard with a reduced version.
 
-Fast-forwards this clone, rebuilds, relaunches. It refuses rather than guesses:
-uncommitted work is never discarded and diverged history is never merged for
-you. The app only ever *tells* you a release exists — updating is a command you
-run, because the hooks, the reporter and the tunnel keeper all live in this
-repo, so the clone is the update unit, not the `.app`.
+Spotify, Apple Music, and YouTube can supply now-playing information. An actively
+playing native player wins over a paused one. Browser music commands go to the
+specific tab. Artwork changes include the source, artist, and URL.
 
-## Cursor
+Timed manual keep-awake holds preserve their deadline across restarts. Automatic
+holds keep the system awake while agents work or wait for attention, followed
+by a short grace period. Keeping the display on and preventing idle lock are
+separate: the latter requires Accessibility permission. A closed lid on battery
+can still cause macOS to sleep.
 
-Cursor 1.7+ has its own agent hooks, so it reports in the same way:
+## Settings and navigation
 
-```sh
-make hooks-cursor      # writes ~/.cursor/hooks.json, additively, with a backup
-```
+The menu bar’s **Settings…** opens Timing, General, Keep Awake, Connections,
+and Updates. Connections shows listener, reporter, notification, and remote
+version health, browser pairing, and optional Watch connectivity.
 
-Reload the Cursor window and its sessions appear alongside Claude Code's, with
-the Cursor mark on the card. Cursor's `stop` hook reports `completed`,
-`aborted` or `error` directly, so outcomes are exact rather than inferred —
-Claude Code needs the transcript read back to work that out.
+Hover or click the notch/edge to open it. ⌥⎋ dismisses it. Keyboard focus and
+accessible actions are available for session selection and clipboard chips.
+Recorded cmux workspace/surface IDs open the matching local pane. Browser cards
+open their conversation URL; Cursor cards can open the workspace. **Open app**
+means no exact session locator was supplied. Remote terminal navigation is not
+inferred from a remote filesystem path.
 
-Hooked: `beforeSubmitPrompt` (working), `sessionStart`/`sessionEnd`, and
-`stop` (done, with the outcome). Nothing is blocked or slowed: the forwarder
-always answers and exits 0 even when the HUD isn't running.
+On displays without a notch, choose either edge, drag the grip, or use the height
+slider. Placement is clamped to the visible screen. Try `make playground-edge`
+(`EDGE=left` changes sides); this uses port 48086 and a separate preference domain.
+
+## Browser bridge
+
+Install and pair the [browser extension](extension/README.md) for Chrome-based
+browsers or Safari. Version 0.2.0 requires a pairing key copied from Settings →
+Connections. Reload chat/music tabs after updating the extension.
+
+Chat activity is inferred from page markup. Navigation, closed tabs, missing
+completion evidence, and user stops never claim a successful response. Site
+redesigns may require adapter changes. These adapters do not inspect credentials.
 
 ## Remote machines
 
-See [docs/remote-setup.md](docs/remote-setup.md). Short version: copy `bin/` to
-the box, run `install-hooks.py` there, and let `~/.ssh/config`'s
-`RemoteForward 48085 127.0.0.1:48085` carry events home while you're SSH'd in.
+See [remote setup](docs/remote-setup.md). The Mac’s control API binds only to
+`127.0.0.1:48085`; SSH reverse tunnels carry remote reports to it. The same-user
+local processes and clients on forwarded remote machines are trusted clients.
+Ordinary website origins are rejected. Extension origins require pairing.
+
+Put `hosts.conf` and `hosts.json` in `~/Library/Application Support/AgentHUD/`,
+or keep the existing files in the source checkout. `AGENT_HUD_ROOT` overrides
+the root for portable/source installations. Host files and credentials are not
+included in release bundles.
+
+`bin/agent-hud-bootstrap HOST` compares reporter checksums, verifies uploaded
+files, updates scripts atomically, and restarts only the HUD reporter when
+needed. An already-running old reporter no longer prevents an update. The
+persistent tunnel keeper manages only the SSH processes it starts.
+
+## Apple Watch
+
+The companion supports an **opt-in local-network, read-only TLS relay**. Enable
+it in Mac Settings → Connections and copy the pairing link. Paste that link into
+the Watch app’s Pair Mac screen, using the iPhone keyboard when convenient.
+Both devices must reach the same local network. The Watch pins the Mac’s exact
+certificate, stores the token in its keychain, and never sends it through redirects.
+The relay exposes `/watch` only; the Mac control server stays on loopback.
+
+The companion refreshes while open. It does not promise background alerts or
+remote Internet access. Token estimates distinguish 24 hours / 7 days; editing
+counts are explicitly scoped to retained sessions. Physical-device installation
+requires your Apple development signing/provisioning. Simulator builds are
+provided for development, not as an App Store or device-installable release.
+
+```sh
+brew install xcodegen
+make watch
+```
 
 ## Event API
 
-`POST http://127.0.0.1:48085/event` — anything can send one, not just Claude:
+`POST http://127.0.0.1:48085/event` accepts generic JSON:
 
 ```json
-{"event": "attention|running|done|info", "host": "box", "project": "repo",
- "session_id": "abc", "message": "text", "image_b64": "...", "image_path": "..."}
+{"event":"done","app":"build","host":"Mac","project":"repo",
+ "session_id":"stable-job-id","outcome":"finished","message":"Build finished"}
 ```
 
-`GET /health` → `{"ok":true,"received":N}`.
+Events: `running`, `attention`, `done`, `info`. Outcomes: `finished`, `interrupted`,
+`error`, `unknown`. Include a stable `app` and `session_id`; identity includes the
+host and provider. Legacy Claude events remain compatible. Optional `focus`
+metadata accepts validated cmux UUIDs or supported conversation URLs, never shell
+commands. `GET /health` is a liveness check; `/debug` has local diagnostics;
+`/watch` is the compact snapshot. Treat diagnostics as private session data.
 
-The API is deliberately generic — Agent HUD is a notification surface for any
-long-running thing, not just AI. A build, a deploy, a big download:
+## Updating and uninstalling
+
+Downloaded app: quit and replace the app with the latest release. Keep it at the
+same path so installed hooks continue to resolve. Source checkout:
 
 ```sh
-make build && curl -s -X POST http://127.0.0.1:48085/event \
-  -H 'Content-Type: application/json' \
-  -d '{"event":"done","host":"Mac","project":"kernel","message":"build finished"}'
+bin/agent-hud-update
 ```
 
-## Uninstall
+The source updater fast-forwards, builds, and relaunches. It refuses dirty or
+diverged tracked work. The app’s update checker only announces releases; it never
+installs code automatically. Update configured remote reporters separately with
+`agent-hud-bootstrap HOST`.
 
 ```sh
 make uninstall
+# Downloaded installation:
+bash '/Applications/AgentHUD.app/Contents/Resources/bin/agent-hud-uninstall'
 ```
 
-Stops the app, removes both LaunchAgents, strips only the agent-hud hook
-entries from `~/.claude/settings.json` (with a timestamped backup), and clears
-`~/.cache/agent-hud`. Your sessions, transcripts, and the repo itself are
-untouched. Remote boxes: `pkill -f '[a]gent-hud-registry'` on each.
+Uninstall unregisters the app login service, removes legacy LaunchAgents, removes
+only Agent HUD hooks, and restores the notifier it replaced if that slot is still
+owned by Agent HUD. It leaves agent transcripts, the checkout, and backups alone.
+Remove the app and browser extensions separately. Remote integrations can be
+removed with `python3 ~/agent-hud/bin/install-hooks.py --uninstall` on that host.
 
-## Your machines
+## Contributing
 
-Remote boxes live in `~/agent-hud/hosts.conf` (one IP/host or pattern per
-line) and display aliases in `~/agent-hud/hosts.json` — both gitignored, so
-your infrastructure never lands in the repo.
-
-## License & contributing
-
-MIT — see [LICENSE](LICENSE). PRs welcome: read [CONTRIBUTING.md](CONTRIBUTING.md)
-first (short, but the design ground rules matter).
-
-## Roadmap
-
-- Approve/deny from the notch (tmux `send-keys` into the session)
-- Windows tray client speaking the same protocol
-- Other agents (Codex CLI, Gemini CLI, …) — anything that can `curl` works today
-- Persistent tunnel via LaunchAgent + autossh instead of piggybacking SSH sessions
+MIT: [LICENSE](LICENSE). See [CONTRIBUTING.md](CONTRIBUTING.md) for the design
+constraints and test expectations. Windows support and additional provider
+adapters remain future work; the generic JSON interface is available today.

@@ -27,7 +27,7 @@ TIMEOUT = 2.5
 # Cursor event -> (our event kind, message). None means "don't report".
 KINDS = {
     "beforeSubmitPrompt": "running",
-    "sessionStart": "running",
+    "sessionStart": "info",
     "stop": "done",
     "sessionEnd": "done",
 }
@@ -73,7 +73,7 @@ def main():
         if event == "beforeSubmitPrompt":
             message = (d.get("prompt") or "").strip()[:220]
         elif event == "stop":
-            message = OUTCOMES.get(d.get("status") or "", "finished")
+            message = OUTCOMES.get(d.get("status") or "", "status unavailable")
         elif event == "sessionEnd":
             message = "session ended"
         elif event == "sessionStart":
@@ -82,6 +82,9 @@ def main():
         project = project_of(d)
         post({
             "event": kind,
+            "outcome": {"completed": "finished", "aborted": "interrupted", "error": "error"}.get(
+                d.get("status") or d.get("reason"), "unknown"),
+            "cwd": (d.get("workspace_roots") or [d.get("cwd") or ""])[0],
             "host": HOST,
             "app": "cursor",
             "project": project,

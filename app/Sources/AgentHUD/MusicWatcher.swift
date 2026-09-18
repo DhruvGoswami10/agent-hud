@@ -8,6 +8,7 @@ struct NowPlaying: Equatable {
     var artworkURL: String // Spotify exposes one; Music doesn't
     var tab: String = ""   // browser-tab identity, so commands reach the right player
 
+    var artworkKey: String { [app, tab, title, artist, artworkURL].joined(separator: "\u{1F}") }
     var isWeb: Bool { app != "Spotify" && app != "Music" }
 }
 
@@ -79,6 +80,7 @@ final class MusicWatcher {
 
     private nonisolated static func poll() -> NowPlaying? {
         let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        var candidates: [NowPlaying] = []
         if running.contains("com.spotify.client") {
             let out = runOSA("""
             tell application "Spotify"
@@ -92,7 +94,7 @@ final class MusicWatcher {
             end tell
             """)
             if let p = out?.components(separatedBy: sep), p.count >= 4, !p[1].isEmpty {
-                return NowPlaying(app: "Spotify", title: p[1], artist: p[2], playing: p[0] == "playing", artworkURL: p[3])
+                candidates.append(NowPlaying(app: "Spotify", title: p[1], artist: p[2], playing: p[0] == "playing", artworkURL: p[3]))
             }
         }
         if running.contains("com.apple.Music") {
@@ -108,10 +110,14 @@ final class MusicWatcher {
             end tell
             """)
             if let p = out?.components(separatedBy: sep), p.count >= 3, !p[1].isEmpty {
-                return NowPlaying(app: "Music", title: p[1], artist: p[2], playing: p[0] == "playing", artworkURL: "")
+                candidates.append(NowPlaying(app: "Music", title: p[1], artist: p[2], playing: p[0] == "playing", artworkURL: ""))
             }
         }
-        return nil
+        return preferred(candidates)
+    }
+
+    nonisolated static func preferred(_ candidates: [NowPlaying]) -> NowPlaying? {
+        candidates.first(where: \.playing) ?? candidates.first
     }
 
     private nonisolated static func runOSA(_ script: String) -> String? {

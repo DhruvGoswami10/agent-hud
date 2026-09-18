@@ -31,10 +31,13 @@ final class ServerHardeningTests: XCTestCase {
         XCTAssertTrue(EventServer.isAllowedOrigin(""))
     }
 
-    func testExtensionOriginsAreAllowed() {
-        XCTAssertTrue(EventServer.isAllowedOrigin("chrome-extension://abcdef"))
-        XCTAssertTrue(EventServer.isAllowedOrigin("safari-web-extension://abcdef"))
-        XCTAssertTrue(EventServer.isAllowedOrigin("moz-extension://abcdef"))
+    func testExtensionOriginsRequirePairing() {
+        XCTAssertFalse(EventServer.isAllowedOrigin("chrome-extension://abcdef"))
+        XCTAssertTrue(EventServer.isAllowedOrigin("chrome-extension://abcdef", token: "paired", expectedToken: "paired"))
+        XCTAssertFalse(EventServer.isAllowedOrigin("safari-web-extension://abcdef"))
+        XCTAssertTrue(EventServer.isAllowedOrigin("safari-web-extension://abcdef", token: "paired", expectedToken: "paired"))
+        XCTAssertFalse(EventServer.isAllowedOrigin("moz-extension://abcdef"))
+        XCTAssertTrue(EventServer.isAllowedOrigin("moz-extension://abcdef", token: "paired", expectedToken: "paired"))
     }
 
     /// The drive-by case: a page you have open POSTing to 127.0.0.1.

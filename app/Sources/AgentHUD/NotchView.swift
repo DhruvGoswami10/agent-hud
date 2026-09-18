@@ -296,10 +296,8 @@ private struct EdgeGripMarks: View {
     let resting: Bool
     let segments: Int
 
-    @State private var pulse = false
-
     var body: some View {
-        Group {
+        LayerPulse(breathing: breathing, opacity: resting ? 0.5 : 1) {
             if bar {
                 // Dark gaps over the coloured capsule, one per extra session.
                 VStack(spacing: 0) {
@@ -323,20 +321,6 @@ private struct EdgeGripMarks: View {
                 }
                 .padding(0.7)
             }
-        }
-        .opacity(resting ? 0.5 : (breathing && pulse ? 0.45 : 1))
-        // Only breathe while something is running: a repeatForever animation
-        // keeps SwiftUI's display link alive for as long as it exists.
-        .onAppear { sync() }
-        .onChange(of: breathing) { _, _ in sync() }
-        .onDisappear { pulse = false }
-    }
-
-    private func sync() {
-        if breathing {
-            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) { pulse = true }
-        } else {
-            withAnimation(.linear(duration: 0.12)) { pulse = false }
         }
     }
 }
@@ -375,60 +359,85 @@ private struct CollapsedStrip: View {
 /// repaints these capsules and stops there. Driven from CollapsedStrip it
 /// invalidated that view — and the root's body with it — sixty times a second,
 /// which is how two 3pt bars came to cost double-digit CPU all day.
-private struct IndicatorMarks: View {
+private struct IndicatorMarks: NSViewRepresentable {
     let sideBars: Bool
     let tint: Color
     let notchHeight: CGFloat
     let breathing: Bool
     let restingOpacity: Double
 
-    @State private var pulse = false
-
-    var body: some View {
-        Group {
-            if sideBars {
-                HStack {
-                    bar
-                    Spacer()
-                    bar
-                }
-                .padding(.horizontal, 3)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                Capsule()
-                    .fill(tint)
-                    .frame(height: 2.5)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 1)
-                    .blur(radius: 0.6)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-            }
-        }
-        .opacity(breathing && pulse ? 0.3 : restingOpacity)
-        // Only breathe while something is running: a repeatForever animation
-        // keeps SwiftUI's display link alive for as long as it exists.
-        .onAppear { sync() }
-        .onChange(of: breathing) { _, _ in sync() }
-        .onDisappear { pulse = false }
-    }
-
-    private func sync() {
-        if breathing {
-            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { pulse = true }
-        } else {
-            // A non-repeating animation is what actually cancels the repeat;
-            // clearing the flag alone leaves the driver running.
-            withAnimation(.linear(duration: 0.12)) { pulse = false }
-        }
-    }
-
-    private var bar: some View {
-        Capsule()
-            .fill(tint)
-            .frame(width: 3, height: max(10, notchHeight - 12))
-            .blur(radius: 0.4)
+    func makeNSView(context: Context) -> IndicatorLayerView { IndicatorLayerView() }
+    func updateNSView(_ view: IndicatorLayerView, context: Context) {
+        view.configure(sideBars: sideBars, tint: NSColor(tint), notchHeight: notchHeight,
+                       breathing: breathing, opacity: restingOpacity)
     }
 }
+
+/// Core Animation changes opacity in the compositor; SwiftUI does no work per frame.
+private final class IndicatorLayerView: NSView {
+    private let first = CALayer()
+    private let second = CALayer()
+    private var sideBars = true
+    private var notchHeight: CGFloat = 30
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.addSublayer(first); layer?.addSublayer(second)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    func configure(sideBars: Bool, tint: NSColor, notchHeight: CGFloat, breathing: Bool, opacity: Double) {
+        self.sideBars = sideBars; self.notchHeight = notchHeight
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        for mark in [first, second] {
+            mark.backgroundColor = tint.cgColor
+            mark.cornerRadius = 1.5
+        }
+        second.isHidden = !sideBars
+        if let layer { configurePulse(layer, breathing: breathing, opacity: opacity) }
+        CATransaction.commit()
+        needsLayout = true
+    }
+    override func layout() {
+        super.layout()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        if sideBars {
+            let h = max(10, notchHeight - 12)
+            first.frame = CGRect(x: 3, y: (bounds.height-h)/2, width: 3, height: h)
+            second.frame = CGRect(x: bounds.width-6, y: (bounds.height-h)/2, width: 3, height: h)
+        } else {
+            first.frame = CGRect(x: 16, y: 1, width: max(0, bounds.width-32), height: 2.5)
+        }
+        CATransaction.commit()
+    }
+}
+
+private func configurePulse(_ layer: CALayer, breathing: Bool, opacity: Double) {
+    layer.opacity = Float(opacity)
+    if breathing && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+        if layer.animation(forKey: "hudPulse") == nil {
+            let pulse = CABasicAnimation(keyPath: "opacity")
+            pulse.fromValue = opacity; pulse.toValue = 0.3
+            pulse.duration = 1.1; pulse.autoreverses = true; pulse.repeatCount = .infinity
+            pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            layer.add(pulse, forKey: "hudPulse")
+        }
+    } else { layer.removeAnimation(forKey: "hudPulse") }
+}
+
+private struct LayerPulse<Content: View>: NSViewRepresentable {
+    let breathing: Bool
+    let opacity: Double
+    @ViewBuilder var content: () -> Content
+    func makeNSView(context: Context) -> NSHostingView<Content> {
+        let view = NSHostingView(rootView: content()); view.wantsLayer = true
+        return view
+    }
+    func updateNSView(_ view: NSHostingView<Content>, context: Context) {
+        view.rootView = content()
+        if let layer = view.layer { configurePulse(layer, breathing: breathing, opacity: opacity) }
+    }
+}
+
 
 // MARK: - Peek
 
@@ -440,7 +449,7 @@ private struct PeekView: View {
     /// Dynamic-Island-style ambient glow color for this peek.
     private var glow: Color {
         switch content {
-        case .event(let e): return e.kind.color
+        case .event(let e): return e.kind == .done ? e.outcome.color : e.kind.color
         case .clipboard: return Color(white: 0.75)
         case .music: return artColor ?? Color(red: 1, green: 0.45, blue: 0.6)
         }
@@ -450,11 +459,11 @@ private struct PeekView: View {
         HStack(spacing: 12) {
             switch content {
             case .event(let e):
-                IconBadge(symbol: e.kind.symbol, color: e.kind.color)
+                IconBadge(symbol: e.kind.symbol, color: e.kind == .done ? e.outcome.color : e.kind.color)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 7) {
                         Text(e.label).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
-                        StatusChip(text: e.kind.verb, color: e.kind.color)
+                        StatusChip(text: e.kind == .done ? e.outcome.label : e.kind.verb, color: e.kind == .done ? e.outcome.color : e.kind.color)
                     }
                     Text(e.message.isEmpty ? "—" : e.message)
                         .font(.system(size: 11.5))
@@ -607,14 +616,20 @@ private struct OpenPanel: View {
             header
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 9) {
-                    MetersRow(state: state)
-                    sessionsColumn
-                    Spacer(minLength: 8)
+                    ScrollView(.vertical) {
+                        VStack(alignment: .leading, spacing: 9) {
+                            MetersRow(state: state)
+                            sessionsColumn
+                        }
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+                    .frame(maxHeight: .infinity)
+                    .layoutPriority(1)
                     if state.musicEnabled, let np = state.nowPlaying { musicBar(np) }
                     if !state.clipboard.isEmpty { clipboardStrip }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                DetailPane(state: state)
+                ScrollView(.vertical) { DetailPane(state: state) }
                     .frame(width: 236)
             }
             .frame(maxHeight: .infinity)
@@ -652,12 +667,14 @@ private struct OpenPanel: View {
                 Image(systemName: "trash").font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
             }
             .buttonStyle(.plain)
-            .help("Clear events")
+            .help("Clear event history")
+            .accessibilityLabel("Clear event history")
             Button { state.collapse() } label: {
                 Image(systemName: "chevron.up").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.55))
             }
             .buttonStyle(.plain)
             .help("Collapse")
+            .accessibilityLabel("Collapse panel")
         }
     }
 
@@ -675,7 +692,10 @@ private struct OpenPanel: View {
         .padding(.vertical, 3)
         .background(Capsule().fill(.white.opacity(state.awakeActive ? 0.1 : 0.05)))
         .contentShape(Capsule())
-        .onTapGesture { state.keepAwake.toggle() }
+        .onTapGesture { if state.keepAwake { state.releaseAwakeHold() } else { state.holdAwake(minutes: 0) } }
+        .accessibilityLabel(state.awakeActive ? "Keep awake: " + state.awakeReason : "Allow sleep")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { if state.keepAwake { state.releaseAwakeHold() } else { state.holdAwake(minutes: 0) } }
         .help(state.keepAwake
               ? "Screen stays on and unlocked (grant Accessibility for the no-lock part) — click to release. Lid closed on battery still sleeps: that's macOS, not us."
               : (state.awakeActive ? "Auto-awake: \(state.awakeReason) — click to hold the screen on indefinitely"
@@ -691,12 +711,12 @@ private struct OpenPanel: View {
     private var sessionsColumn: some View {
         VStack(alignment: .leading, spacing: 5) {
             sectionLabel("SESSIONS")
-            ForEach(state.sessions.prefix(7)) { s in
+            ForEach(state.sessions) { s in
                 SessionCard(
                     session: s,
                     selected: state.selectedSession?.id == s.id,
                     onSelect: { state.selectedSessionId = s.id },
-                    onReview: { state.focusTerminal() }
+                    onReview: { state.focusSession(s) }
                 )
             }
             if state.sessions.isEmpty {
@@ -920,7 +940,7 @@ private struct SessionCard: View {
 
     var body: some View {
         HStack(spacing: 9) {
-            Circle().fill(session.kind.color).frame(width: 6, height: 6)
+            Circle().fill(session.statusColor).frame(width: 6, height: 6)
             ZStack {
                 RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.white.opacity(0.1))
                     .frame(width: 25, height: 25)
@@ -934,7 +954,7 @@ private struct SessionCard: View {
             Spacer(minLength: 6)
             if session.kind == .attention {
                 Button(action: onReview) {
-                    Text("Review")
+                    Text(session.focus.actionTitle(app: session.app))
                         .font(.system(size: 10.5, weight: .semibold))
                         .foregroundStyle(.black)
                         .padding(.horizontal, 10)
@@ -970,6 +990,11 @@ private struct SessionCard: View {
         )
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
+        .focusable()
+        .onKeyPress(.return) { onSelect(); return .handled }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(session.label + ", " + session.statusLabel)
+        .accessibilityAction(named: "Select session", onSelect)
     }
 
     private var subtitle: String {
@@ -1028,6 +1053,10 @@ private struct DetailPane: View {
                         }
                     }
                 }
+                if s.ctxUsed > 0 && s.ctxFraction == nil {
+                    Text("Context: \(kFmt(s.ctxUsed)) used · capacity unavailable")
+                        .font(.system(size: 10)).foregroundStyle(.white.opacity(0.6))
+                }
                 if s.lastIn > 0 || s.lastOut > 0 {
                     HStack(spacing: 18) {
                         VStack(alignment: .leading, spacing: 2) {
@@ -1045,20 +1074,21 @@ private struct DetailPane: View {
                 Divider().overlay(.white.opacity(0.1))
                 HStack(spacing: 5) {
                     Circle().fill(session: s)
-                    Text(s.kind.verb).font(.system(size: 10, weight: .medium)).foregroundStyle(s.kind.color)
+                    Text(s.statusLabel).font(.system(size: 10, weight: .medium)).foregroundStyle(s.statusColor)
                     Spacer()
                     Text(s.updated, style: .relative).font(.system(size: 9)).foregroundStyle(.white.opacity(0.4))
                 }
                 if !s.message.isEmpty {
                     Text(s.message).font(.system(size: 10)).foregroundStyle(.white.opacity(0.5)).lineLimit(3)
                 }
-                // The change receipt — what the session actually produced.
-                // Session scope, not per-turn: the counts cover the whole
-                // transcript, and the label must not pretend otherwise.
+                Button(s.focus.actionTitle(app: s.app)) { state.focusSession(s) }
+                    .buttonStyle(.bordered)
+                    .help("Opens the recorded location when available; otherwise opens the source app.")
+                // Successful Edit/Write activity; repeated edits are not a git diff.
                 if s.filesChanged > 0 {
                     Divider().overlay(.white.opacity(0.1))
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("WHAT CHANGED · THIS SESSION")
+                        Text("EDIT ACTIVITY · ESTIMATE")
                             .font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.35)).kerning(0.8)
                         HStack(spacing: 6) {
                             Text("\(s.filesChanged) file\(s.filesChanged == 1 ? "" : "s")")
@@ -1090,7 +1120,7 @@ private struct DetailPane: View {
 
 private extension Circle {
     func fill(session s: SessionInfo) -> some View {
-        fill(s.kind.color).frame(width: 5, height: 5)
+        fill(s.statusColor).frame(width: 5, height: 5)
     }
 }
 
@@ -1162,11 +1192,23 @@ private struct ClipChip: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.85)))
             }
         }
+        .overlay(alignment: .bottomTrailing) {
+            if !item.isRestorable {
+                Text("Preview only").font(.system(size: 8, weight: .semibold))
+                    .padding(3).background(.black.opacity(0.8), in: Capsule())
+            }
+        }
         .onTapGesture { copyBack() }
-        .help("Click to copy again")
+        .focusable(item.isRestorable)
+        .onKeyPress(.return) { copyBack(); return .handled }
+        .accessibilityLabel(item.isRestorable ? "Copy " + item.text : "Preview only: " + item.text)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { copyBack() }
+        .help(item.isRestorable ? "Copy the original again" : "Preview only: original exceeds the history memory limit")
     }
 
     private func copyBack() {
+        guard item.isRestorable else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
         // Restore the original, not the preview: the chip's own text is cut at
@@ -1179,8 +1221,6 @@ private struct ClipChip: View {
         case .image:
             if let data = item.imageData, !item.imageType.isEmpty {
                 pb.setData(data, forType: .init(item.imageType))
-            } else if let img = item.image {
-                pb.writeObjects([img])
             }
         default:
             pb.setString(item.fullText.isEmpty ? item.text : item.fullText, forType: .string)
