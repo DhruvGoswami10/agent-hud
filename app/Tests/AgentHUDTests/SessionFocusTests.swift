@@ -60,6 +60,49 @@ final class SessionFocusTests: XCTestCase {
         XCTAssertFalse(SessionFocus(cwd: "/remote/path").canJumpBack(app: "claude", local: false))
     }
 
+    // Selecting a pane alone worked only when cmux was already on the
+    // current desktop. Every successful selection also needs activation.
+    func testCmuxBringsTheSelectedPaneForwardBeforeCompleting() async {
+        let finished = expectation(description: "navigation completed")
+        let selected = DispatchSemaphore(value: 0)
+        var activations = 0
+        SessionFocus.handoffToCmux(select: {
+            XCTAssertFalse(Thread.isMainThread, "permission and scripting must not block hover or the UI")
+            selected.signal()
+            return nil
+        }, activate: {
+            XCTAssertEqual(selected.wait(timeout: .now()), .success, "select the right pane before changing desktop")
+            activations += 1
+            return true
+        }, completion: { error in
+            XCTAssertNil(error)
+            XCTAssertEqual(activations, 1)
+            finished.fulfill()
+        })
+        await fulfillment(of: [finished], timeout: 2)
+    }
+
+    func testCmuxDoesNotActivateAnUnrelatedPaneWhenSelectionFails() async {
+        let finished = expectation(description: "selection failed")
+        SessionFocus.handoffToCmux(select: { "The terminal has closed." }, activate: {
+            XCTFail("a denied permission or missing pane must not activate cmux's previous session")
+            return true
+        }, completion: { error in
+            XCTAssertEqual(error, "The terminal has closed.")
+            finished.fulfill()
+        })
+        await fulfillment(of: [finished], timeout: 2)
+    }
+
+    func testCmuxDoesNotClaimSuccessWhenWindowActivationFails() async {
+        let finished = expectation(description: "activation failed")
+        SessionFocus.handoffToCmux(select: { nil }, activate: { false }, completion: { error in
+            XCTAssertEqual(error, "cmux selected the session but could not bring its window forward.")
+            finished.fulfill()
+        })
+        await fulfillment(of: [finished], timeout: 2)
+    }
+
     func testAChangedBrowserClientDoesNotReuseAnOldTabNumber() {
         let old = SessionFocus(json: ["browser_client": workspace, "browser_tab": "12",
                                       "url": "https://chatgpt.com/c/one"])

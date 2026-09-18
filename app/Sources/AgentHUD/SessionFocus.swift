@@ -129,12 +129,9 @@ struct SessionFocus: Equatable, Sendable {
                 return
             }
             let pid = cmux.processIdentifier
-            DispatchQueue.global(qos: .userInitiated).async {
-                let error = Self.openCmux(workspace: workspace, surface: surface, pid: pid)
-                DispatchQueue.main.async {
-                    completion(error)
-                }
-            }
+            Self.handoffToCmux(
+                select: { Self.openCmux(workspace: workspace, surface: surface, pid: pid) },
+                activate: { cmux.activate(options: []) }, completion: completion)
             return
         }
         if !sshConnection.isEmpty {
@@ -179,6 +176,21 @@ struct SessionFocus: Equatable, Sendable {
             return
         }
         completion("This session has no linked terminal or browser window yet.")
+    }
+
+    @MainActor
+    static func handoffToCmux(select: @escaping @Sendable () -> String?,
+                              activate: @escaping @MainActor () -> Bool,
+                              completion: @escaping @MainActor (String?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let error = select()
+            DispatchQueue.main.async {
+                if let error { completion(error) }
+                // Scripting selects the pane but does not reliably move to
+                // its Space. Activate once, after the selection is complete.
+                else { completion(activate() ? nil : "cmux selected the session but could not bring its window forward.") }
+            }
+        }
     }
 
     private static func openCmux(workspace: String, surface: String, pid: pid_t) -> String? {

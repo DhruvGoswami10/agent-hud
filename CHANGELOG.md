@@ -6,6 +6,9 @@
   navigation URL could switch away from cmux's full-screen desktop on an
   external monitor, even with the HUD closed. Match the recorded workspace
   and terminal IDs and wait for cmux's reply before reporting success.
+- Activate cmux after the pane is selected, so navigation also brings it
+  forward from another desktop. Never activate an unrelated pane if selection
+  fails, and report failed window activation instead of claiming success.
 - Request Automation access to cmux only when **Go to session** is clicked.
   A denied grant gets a specific explanation; closed or missing terminals
   get a separate error. Accessibility and cmux's private control socket are
@@ -17,8 +20,8 @@
   focus only when needed; the collapsed indicators and hover behavior remain.
 - Browser navigation uses the same focus handoff and still waits for its
   acknowledgment. Failed navigation reopens the panel with an explanation.
-- Three regression tests reproduce the old handoff ordering and cover native
-  success, native failure, and browser dispatch.
+- Six regression tests cover HUD handoff ordering, native success/failure,
+  browser dispatch, and cmux selection followed by window activation.
 - Mac advances to 0.3.2. Reporter remains 0.3.1, browser/Safari 0.3.0, Watch
   0.2.0, and the event protocol remains version 2.
 
