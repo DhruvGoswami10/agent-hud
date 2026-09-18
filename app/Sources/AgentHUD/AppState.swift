@@ -24,7 +24,12 @@ final class AppState: ObservableObject {
         pb.setData(Data(), forType: .init("org.nspasteboard.ConcealedType"))
     }
 
-    @Published var systemNotifications: Bool { didSet { UserDefaults.standard.set(systemNotifications, forKey: "systemNotifications") } }
+    @Published var systemNotifications: Bool {
+        didSet {
+            UserDefaults.standard.set(systemNotifications, forKey: "systemNotifications")
+            refreshNotificationStatus()
+        }
+    }
     @Published var sounds: Bool { didSet { UserDefaults.standard.set(sounds, forKey: "sounds") } }
     @Published var expandOnCopy: Bool { didSet { UserDefaults.standard.set(expandOnCopy, forKey: "expandOnCopy") } }
     @Published var sideBars: Bool {
@@ -47,7 +52,12 @@ final class AppState: ObservableObject {
             updateCaffeine()
         }
     }
-    @Published var muted: Bool { didSet { UserDefaults.standard.set(muted, forKey: "muted") } }
+    @Published var muted: Bool {
+        didSet {
+            UserDefaults.standard.set(muted, forKey: "muted")
+            if muted, case .peek = hudState { dismissNow() }
+        }
+    }
 
     // MARK: - Timing & behaviour preferences (Settings window)
 
@@ -171,6 +181,7 @@ final class AppState: ObservableObject {
 
     /// Set by NotchWindowController; resizes the panel window for a target state.
     var frameUpdater: ((HUDState) -> Void)?
+    var dismissHandler: (() -> Void)?
 
     @Published var selectedSessionId: String?
 
@@ -1201,6 +1212,7 @@ final class AppState: ObservableObject {
     func dismissNow() {
         hovering = false
         hoverTask?.cancel()
+        dismissHandler?()
         collapse()
     }
 
@@ -1253,6 +1265,7 @@ final class AppState: ObservableObject {
     }
 
     private func show(_ target: HUDState, autoCollapse: TimeInterval?) {
+        if muted, case .peek = target { return }
         collapseTask?.cancel()
         withAnimation(target.isCollapsed ? animStyle.collapseAnimation : animStyle.animation) { hudState = target }
         if let t = autoCollapse { scheduleCollapse(after: t) }

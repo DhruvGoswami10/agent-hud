@@ -74,7 +74,8 @@ struct NotchRootView: View {
                     }
                 case .peek(let content):
                     PeekView(content: content, art: state.nowPlayingArt,
-                             artColor: state.nowPlayingArtColor.map(Color.init(nsColor:)))
+                             artColor: state.nowPlayingArtColor.map(Color.init(nsColor:)),
+                             onDismiss: state.dismissNow)
                         .padding(.top, metrics.notchHeight)
                         .padding(edgeInset)
                         .opacity(showContent ? 1 : 0)
@@ -107,6 +108,7 @@ struct NotchRootView: View {
                 break
             }
         }
+        .onExitCommand { state.dismissNow() }
         .onAppear {
             // A display change rebuilds this view from scratch while the HUD
             // may already be open; onChange won't fire (the stage didn't
@@ -445,6 +447,7 @@ private struct PeekView: View {
     let content: PeekContent
     var art: NSImage?
     var artColor: Color?
+    let onDismiss: () -> Void
 
     /// Dynamic-Island-style ambient glow color for this peek.
     private var glow: Color {
@@ -517,6 +520,17 @@ private struct PeekView: View {
                 // peek says where the sound lives at a glance.
                 MusicSourceMark(app: np.app, size: 16)
             }
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.65))
+                    .frame(width: 28, height: 28)
+                    .background(.white.opacity(0.08), in: Circle())
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss this notification")
+            .accessibilityLabel("Dismiss notification")
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -1232,4 +1246,3 @@ private struct ClipChip: View {
         }
     }
 }
-

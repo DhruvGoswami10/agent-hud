@@ -202,7 +202,7 @@ struct SettingsView: View {
                 }
                 Toggle("System notifications", isOn: $state.systemNotifications)
                 Toggle("Sounds", isOn: $state.sounds)
-                Toggle("Mute everything", isOn: $state.muted)
+                Toggle("Mute all alerts and slide-outs", isOn: $state.muted)
                 Toggle("Expand on copy", isOn: $state.expandOnCopy)
                 Toggle("Music controls", isOn: $state.musicEnabled)
             }

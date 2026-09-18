@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1 — 2026-09-18
+
+- Slide-outs accept the first click while another app is active; clicking no
+  longer merely focuses the HUD. A visible dismiss button and Escape also close them.
+- Dismissal suppresses hover reopening until the pointer leaves the HUD.
+- Mute All Alerts retracts the current slide-out and suppresses subsequent
+  agent, clipboard and music slide-outs while preserving session activity.
+- Turning off system banners immediately clears the permission warning.
+- Four interaction regressions reproduce the previous failures and pass with
+  the fixes. Browser, reporter, Safari and Watch components remain at 0.2.0.
+
 ## 0.2.0 — 2026-09-18
 
 Reliability release following the September audit. Includes the privacy and

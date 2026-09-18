@@ -2,6 +2,12 @@ import AppKit
 import Combine
 import SwiftUI
 
+/// The HUD floats above another app without activating it. Its first click
+/// must reach the content instead of being consumed to focus the panel.
+final class HUDHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 final class NotchPanel: NSPanel {
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 300, height: 40),
@@ -78,11 +84,12 @@ final class NotchWindowController {
     init(state: AppState) {
         self.state = state
         self.metrics = Self.computeMetrics(for: Self.targetScreen(), placement: Self.placement(for: state))
-        let hosting = NSHostingView(rootView: NotchRootView(state: state, metrics: metrics))
+        let hosting = HUDHostingView(rootView: NotchRootView(state: state, metrics: metrics))
         hosting.autoresizingMask = [.width, .height]
         panel.contentView = hosting
         panel.ignoresMouseEvents = true
         state.frameUpdater = { _ in }  // sizes are view-driven now
+        state.dismissHandler = { [weak self] in self?.hoverGate.suppressUntilExit() }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.screensChanged() }

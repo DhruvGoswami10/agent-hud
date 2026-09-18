@@ -29,7 +29,8 @@ location to return to the work.
 
 <p align="center"><img src="assets/notch.gif" alt="Agent activity beside the MacBook notch" width="760"></p>
 
-**Version 0.2.0** is the reliability release. See [CHANGELOG.md](CHANGELOG.md)
+**Version 0.2.1** fixes notification dismissal and muting on top of the 0.2.0
+reliability release. See [CHANGELOG.md](CHANGELOG.md)
 and the [audit resolution notes](docs/reliability-release.md).
 
 ## Install

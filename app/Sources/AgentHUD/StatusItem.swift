@@ -39,7 +39,7 @@ final class StatusItemController: NSObject {
         sideBarsItem = makeItem("Side Indicator Bars", #selector(toggleSideBars), "")
         edgeLeftItem = makeItem("Side Notch on Left Edge", #selector(toggleEdgeSide), "")
         musicItem = makeItem("Music Controls", #selector(toggleMusic), "")
-        muteItem = makeItem("Mute Notifications", #selector(toggleMute), "m")
+        muteItem = makeItem("Mute All Alerts", #selector(toggleMute), "m")
         awakeItem = makeItem("Keep Mac Awake", #selector(toggleAwake), "")
         autoAwakeItem = makeItem("Auto-Awake While Agents Work", #selector(toggleAutoAwake), "")
         menu.addItem(notifItem)
