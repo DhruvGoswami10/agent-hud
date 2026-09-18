@@ -8,3 +8,10 @@ bootstrap.log
 .DS_Store
 watch/AgentHUDWatch.xcodeproj/
 watch/build/
+
+# Agent skills installed per-project by `npx skills add` (Hyperframes, for
+# /brag). 21MB of vendor instructions that belong to the toolchain, not to
+# this repo — and `git add -A` would otherwise sweep them in.
+.agents/
+.claude/
+skills-lock.json
