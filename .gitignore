@@ -3,6 +3,7 @@ dist/
 safari/*/build/
 hosts.conf
 hosts.json
+.hosts.lock
 bootstrap.log
 *.bak*
 .DS_Store
