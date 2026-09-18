@@ -27,6 +27,13 @@ def script(name):
 
 
 class AdapterTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        env = patch.dict(os.environ, {"AGENT_HUD_FOCUS_DIR": temporary.name})
+        env.start()
+        self.addCleanup(env.stop)
+
     def test_codex_notify_wrapper_cannot_reenter_the_hud(self):
         # The live chain was HUD -> Computer Use -> --previous-notify HUD.
         # Bound the fake wrapper itself so the old code fails without leaving

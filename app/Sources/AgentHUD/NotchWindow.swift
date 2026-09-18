@@ -180,9 +180,10 @@ final class NotchWindowController {
                                    peekPreview: state.peekPreviewSize,
                                    idleIndicator: state.alwaysShowIndicator,
                                    edgeBar: state.edgeGripBar)
-        // Keep the pre-dismissal bounds: shrinking the panel underneath a
-        // stationary pointer is not the same as the pointer leaving it.
-        hoverGate.suppressUntilExit(within: hoverRect(size, on: screen, margin: Self.exitMargin))
+        // Freeze the click location too: a deliberate move back to the notch
+        // re-arms hover even while still inside the old popup bounds.
+        hoverGate.suppressUntilExit(within: hoverRect(size, on: screen, margin: Self.exitMargin),
+                                   at: NSEvent.mouseLocation)
     }
 
     fileprivate func pollMouse() {

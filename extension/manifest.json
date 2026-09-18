@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Agent HUD Bridge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Feeds YouTube now-playing and AI chat activity (ChatGPT, Claude) to the Agent HUD notch app on localhost.",
   "host_permissions": [
     "http://127.0.0.1:48085/*"

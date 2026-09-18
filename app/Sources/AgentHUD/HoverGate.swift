@@ -15,6 +15,7 @@ struct HoverGate {
     private(set) var engaged = false
     private var suppressed = false
     private var suppressedRect: CGRect?
+    private var dismissalPoint: CGPoint?
 
     init(dwellSamples: Int = 2, maxSpeed: CGFloat = 50) {
         self.dwellSamples = dwellSamples
@@ -23,9 +24,10 @@ struct HoverGate {
 
     /// A click can arrive before the dwell threshold. Do not let the next
     /// sample reopen the notification while the pointer is still over it.
-    mutating func suppressUntilExit(within rect: CGRect? = nil) {
+    mutating func suppressUntilExit(within rect: CGRect? = nil, at point: CGPoint? = nil) {
         suppressed = true
         suppressedRect = rect
+        dismissalPoint = point ?? last
         engaged = false
         samples = 0
     }
@@ -36,11 +38,16 @@ struct HoverGate {
         let delta = last.map { hypot(point.x - $0.x, point.y - $0.y) } ?? .greatestFiniteMagnitude
         last = point
         if suppressed {
-            if !(suppressedRect?.contains(point) ?? inside) {
+            if dismissalPoint == nil { dismissalPoint = point }
+            let moved = dismissalPoint.map { hypot(point.x - $0.x, point.y - $0.y) >= 12 } ?? false
+            // Shrinking under a stationary pointer must not reopen a popup.
+            // Deliberate movement, however, starts a new hover immediately;
+            // users should not have to leave the entire old popup rectangle.
+            if moved || !(suppressedRect?.contains(point) ?? inside) {
                 suppressed = false
                 suppressedRect = nil
-            }
-            return nil
+                dismissalPoint = nil
+            } else { return nil }
         }
         guard inside else {
             samples = 0

@@ -94,17 +94,25 @@ final class NotificationInteractionTests: XCTestCase {
                        "hover-to-open resumes after leaving and returning")
     }
 
-    func testShrinkingThePanelDoesNotCountAsThePointerLeaving() {
+    func testReturningToTheNotchRearmsHoverInsideTheOldPopupBounds() {
         var gate = HoverGate()
+        _ = gate.update(point: CGPoint(x: 600, y: 70), inside: true)
         gate.suppressUntilExit(within: CGRect(x: 400, y: 0, width: 470, height: 112))
         // Retraction moves the current bounds away from the stationary cursor.
         XCTAssertNil(gate.update(point: CGPoint(x: 600, y: 70), inside: false))
-        // Moving back toward the notch is still within the dismissed slide-out.
-        XCTAssertNil(gate.update(point: CGPoint(x: 600, y: 15), inside: true))
-        XCTAssertNil(gate.update(point: CGPoint(x: 600, y: 15), inside: true))
-        XCTAssertFalse(gate.engaged)
-        _ = gate.update(point: CGPoint(x: 600, y: 200), inside: false)
+        // A deliberate move back to the notch must work even though the
+        // pointer never left the old popup's much larger rectangle.
         XCTAssertNil(gate.update(point: CGPoint(x: 600, y: 15), inside: true))
         XCTAssertEqual(gate.update(point: CGPoint(x: 600, y: 15), inside: true), true)
+    }
+
+    func testPointerJitterAfterDismissalDoesNotReopenTheNotch() {
+        var gate = HoverGate()
+        _ = gate.update(point: CGPoint(x: 600, y: 15), inside: true)
+        gate.suppressUntilExit(within: CGRect(x: 400, y: 0, width: 470, height: 112))
+        for x in [600.0, 601, 599, 600] {
+            XCTAssertNil(gate.update(point: CGPoint(x: x, y: 15), inside: true))
+        }
+        XCTAssertFalse(gate.engaged)
     }
 }

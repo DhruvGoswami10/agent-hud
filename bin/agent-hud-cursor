@@ -20,6 +20,9 @@ import socket
 import sys
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hud_focus import remember_focus
+
 URL = os.environ.get("AGENT_HUD_URL", "http://127.0.0.1:48085")
 HOST = os.environ.get("AGENT_HUD_HOST") or socket.gethostname().split(".")[0]
 TIMEOUT = 2.5
@@ -90,6 +93,8 @@ def main():
             "project": project,
             # conversation_id is stable across turns — exactly what we key on.
             "session_id": d.get("conversation_id") or d.get("session_id") or project,
+            "focus": remember_focus("cursor", d.get("conversation_id") or d.get("session_id") or project,
+                                    {"application": "com.todesktop.230313mzl4w4u92"}),
             "session_name": project,
             "model": d.get("model") or d.get("model_id") or "",
             "message": message,

@@ -121,6 +121,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.sync { MainActor.assumeIsolated { state.watchPayload() } }
         }
         state.webMusicQueue = server.musicCommands
+        state.browserCommands = server.browserCommands
+        server.onBrowserFocus = { id, ok in
+            Task { @MainActor in state.browserFocusFinished(id: id, ok: ok) }
+        }
         server.onMusicCommand = { cmd, tab in
             Task { @MainActor in state.externalMusicCommand(cmd, tab: tab) }
         }

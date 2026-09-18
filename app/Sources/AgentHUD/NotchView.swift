@@ -1095,9 +1095,20 @@ private struct DetailPane: View {
                 if !s.message.isEmpty {
                     Text(s.message).font(.system(size: 10)).foregroundStyle(.white.opacity(0.5)).lineLimit(3)
                 }
-                Button(s.focus.actionTitle(app: s.app)) { state.focusSession(s) }
+                Button(s.focus.actionTitle(app: s.app, local: AppState.Host.isLocal(s.host))) { state.focusSession(s) }
                     .buttonStyle(.bordered)
+                    .disabled(state.navigationBusy)
                     .help("Opens the recorded location when available; otherwise opens the source app.")
+                if !state.navigationMessage.isEmpty {
+                    Text(state.navigationMessage)
+                        .font(.system(size: 10)).foregroundStyle(.white.opacity(0.6))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if state.navigationLinkFallback, !s.focus.url.isEmpty {
+                    Button("Open conversation link") { state.openRecordedLocation(s) }
+                        .buttonStyle(.bordered)
+                        .disabled(state.navigationBusy)
+                }
                 // Successful Edit/Write activity; repeated edits are not a git diff.
                 if s.filesChanged > 0 {
                     Divider().overlay(.white.opacity(0.1))

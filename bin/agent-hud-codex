@@ -11,6 +11,9 @@ import subprocess
 import sys
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hud_focus import capture_focus, remember_focus
+
 URL = os.environ.get("AGENT_HUD_URL", "http://127.0.0.1:48085")
 HOST = os.environ.get("AGENT_HUD_HOST") or socket.gethostname().split(".")[0]
 # Written by the installer: the notify program we displaced, argv and all.
@@ -110,8 +113,7 @@ def main():
             "outcome": outcome,
             "model": d.get("model") or "",
             "hook": hook or "notify",
-            "focus": {"workspace": os.environ.get("CMUX_WORKSPACE_ID", ""),
-                      "surface": os.environ.get("CMUX_SURFACE_ID", "")},
+            "focus": remember_focus("codex", sid, capture_focus()),
         }
         turn = d.get("turn-id") or d.get("turn_id")
         if is_notify and isinstance(turn, str) and turn:

@@ -1,7 +1,8 @@
 # Agent HUD Bridge
 
 YouTube / YouTube Music now-playing and tab-addressed controls, plus ChatGPT and
-Claude activity. Requires Agent HUD 0.2.0 or newer and one-time browser pairing.
+Claude activity. Agent HUD 0.3.0 and this bridge also return session cards to
+their original conversation tab and window. Requires one-time browser pairing.
 
 ## Chrome, Arc, Edge, Brave
 
@@ -36,3 +37,10 @@ initial new-chat URL rewrite and subsequent turns in the tab.
 
 YouTube commands are addressed to the reporting tab. Polling is bounded and
 backs off when the Mac is unavailable or the extension needs pairing.
+
+Conversation focus checks the original tab's current URL before selecting it.
+If it moved or closed, the bridge finds another matching chat tab or opens the
+saved conversation link. Commands expire after five seconds and acknowledge
+success to the HUD. This uses the existing chat content scripts, without adding
+browsing-history or broad tab permissions. The 0.2.0 HUD remains compatible with
+chat and music reporting; session navigation requires 0.3.0 on both sides.

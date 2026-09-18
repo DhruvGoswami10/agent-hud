@@ -1,5 +1,10 @@
 // Shared conversation state machine. DOM absence alone never proves success.
 (function (root) {
+  if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
+    chrome.runtime.onMessage.addListener((message, _sender, reply) => {
+      if (message?.type === "agentHUDFocusCheck") reply({ url: location.href });
+    });
+  }
   class HUDChatLifecycle {
     constructor({ provider, canonical, send, aliases = {}, remember = () => {} }) {
       Object.assign(this, { provider, canonical, send, aliases, remember });

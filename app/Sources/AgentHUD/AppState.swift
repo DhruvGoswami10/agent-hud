@@ -399,8 +399,57 @@ final class AppState: ObservableObject {
         return String(decoding: data, as: UTF8.self)
     }
 
+    @Published private(set) var navigationMessage = ""
+    @Published private(set) var navigationBusy = false
+    @Published private(set) var navigationLinkFallback = false
+    var browserCommands: CommandQueue?
+    private var navigationRequest: String?
+    private var navigationTask: Task<Void, Never>?
+
     func focusSession(_ session: SessionInfo) {
-        session.focus.open(app: session.app, local: Host.isLocal(session.host))
+        guard !navigationBusy else { return }
+        navigationTask?.cancel()
+        navigationRequest = nil
+        navigationMessage = ""
+        navigationBusy = true
+        navigationLinkFallback = false
+        let focus = session.focus
+        let id = UUID().uuidString
+        if focus.hasBrowserTab, browserCommands?.isConnected(focus.browserClient) == true,
+           let data = try? JSONSerialization.data(withJSONObject: ["id": id, "tab": focus.browserTab,
+                "url": focus.url, "expires": Date().addingTimeInterval(5).timeIntervalSince1970 * 1000]) {
+            navigationRequest = id
+            navigationMessage = "Opening conversation…"
+            browserCommands?.push(String(decoding: data, as: UTF8.self), tab: focus.browserClient)
+            navigationTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard !Task.isCancelled else { return }
+                self?.browserFocusFinished(id: id, ok: false)
+            }
+            return
+        }
+        openRecordedLocation(session)
+    }
+
+    func browserFocusFinished(id: String, ok: Bool) {
+        guard navigationRequest == id else { return }
+        navigationTask?.cancel()
+        navigationRequest = nil
+        navigationBusy = false
+        navigationLinkFallback = !ok
+        navigationMessage = ok ? "" : "The browser did not open this session. Try its conversation link."
+        if ok { dismissNow() }
+    }
+
+    func openRecordedLocation(_ session: SessionInfo) {
+        navigationBusy = true
+        navigationMessage = ""
+        navigationLinkFallback = false
+        session.focus.open(app: session.app, local: Host.isLocal(session.host)) { [weak self] error in
+            self?.navigationBusy = false
+            if let error { self?.navigationMessage = error }
+            else { self?.dismissNow() }
+        }
     }
 
     func focusTerminal() {
@@ -646,7 +695,7 @@ final class AppState: ObservableObject {
             }
             sessions[i].kind = e.kind
             sessions[i].outcome = e.outcome
-            if e.focus.hasLocation { sessions[i].focus = e.focus }
+            if e.focus.hasLocation { sessions[i].focus = sessions[i].focus.merging(e.focus) }
             sessions[i].message = cleanSessionMessage(e.message)
             sessions[i].updated = e.ts
             if !e.project.isEmpty { sessions[i].project = e.project }
@@ -945,7 +994,7 @@ final class AppState: ObservableObject {
         if !e.model.isEmpty { s.model = e.model }
         if !e.effort.isEmpty { s.effort = e.effort }
         s.ctxLimit = e.ctxLimit
-        if e.focus.hasLocation { s.focus = e.focus }
+        if e.focus.hasLocation { s.focus = s.focus.merging(e.focus) }
         if e.ctxUsed > 0 {
             s.ctxUsed = e.ctxUsed
             s.lastIn = e.lastIn

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.0 — 2026-09-18
+
+- Hover works again after dismissing a notification: a deliberate move back
+  onto the notch re-arms it inside the old popup bounds. A stationary pointer
+  and small pointer jitter keep the dismissed popup closed.
+- Preserve exact session locations across sparse events and reporter refreshes;
+  retain bounded private hook metadata across app restarts.
+- Open recorded cmux workspaces/panes, Warp session links, and local Terminal
+  or iTerm2 tabs/panes. Cursor opens its workspace. Other supported sources
+  open their recorded app; missing locations are explained instead of guessing
+  whichever terminal happens to be running.
+- The paired browser bridge returns to the matching ChatGPT/Claude tab and
+  window. Closed tabs reopen their conversation URL. Failed commands expose
+  a link fallback; expiring commands cannot unexpectedly steal focus later.
+  No additional extension permissions are required.
+- Reload the 0.3.0 extension and existing chat tabs. Existing pairing keys stay
+  valid. New terminal locations are captured on the next hooked agent turn.
+- Mac, browser, Safari, and reporter versions advance to 0.3.0. Event protocol
+  stays at version 2; the unchanged Watch companion remains 0.2.0.
+
 ## 0.2.2 — 2026-09-18
 
 - Stop recursive Codex notifier chains, including wrappers that retain Agent

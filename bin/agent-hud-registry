@@ -25,8 +25,12 @@ import os
 import re
 import socket
 import subprocess
+import sys
 import time
 import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hud_focus import recorded_focus
 
 URL = os.environ.get("AGENT_HUD_URL", "http://127.0.0.1:48085")
 INTERVAL = float(os.environ.get("AGENT_HUD_REGISTRY_INTERVAL", "5"))
@@ -184,6 +188,7 @@ def snapshot():
             "cwd": j.get("cwd") or "",
             "status": j.get("status") or "",
             "app": "claude",
+            "focus": recorded_focus("claude", sid),
             "updatedAt": j.get("updatedAt") or 0,
         }
         row.update(session_stats(sid))
@@ -478,6 +483,7 @@ def codex_snapshot():
             _codex_rate = (rec["rate"], rec["rate_ts"])
         row = {"sessionId": sid, "name": title or os.path.basename(cwd.rstrip("/")) or "codex",
                "cwd": cwd, "updatedAt": int(mtime * 1000), "app": "codex"}
+        row["focus"] = recorded_focus("codex", sid)
         for key in ("status", "outcome", "model", "effort", "ctx_used", "ctx_limit",
                     "last_in", "last_out", "total_tokens", "turns"):
             row[key] = rec[key]
@@ -864,7 +870,7 @@ def payload():
     # Sessions first: the Codex scan is what picks up its rate-limit reading.
     codex = codex_snapshot()
     body = {"host": HOST, "sessions": snapshot() + codex, "usage": usage_windows(),
-            "providers": ["claude", "codex"], "protocol": 2, "reporter_version": "0.2.0"}
+            "providers": ["claude", "codex"], "protocol": 2, "reporter_version": "0.3.0"}
     lim = limits()
     if lim:
         body["limits"] = lim

@@ -8,27 +8,31 @@ import Network
 /// poll GET /music/commands since the HUD can't reach into a web page.
 final class CommandQueue {
     private let lock = NSLock()
-    private var items: [(tab: String, cmd: String)] = []
+    private var items: [(tab: String, cmd: String, created: Date)] = []
     private var history: [String] = []
+    private var lastPoll: [String: Date] = [:]
+    private let maxAge: TimeInterval?
+
+    init(maxAge: TimeInterval? = nil) { self.maxAge = maxAge }
 
     /// Fires after every push with the target tab — the server uses it to
     /// answer a parked long-poll immediately instead of waiting to be asked.
     var onPush: ((String) -> Void)?
 
-    private static let clock: DateFormatter = {
+    private let clock: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss"
         return f
     }()
 
     private func note(_ s: String) {
-        history.append("\(Self.clock.string(from: Date())) \(s)")
+        history.append("\(clock.string(from: Date())) \(s)")
         if history.count > 20 { history.removeFirst(history.count - 20) }
     }
 
     func push(_ c: String, tab: String = "") {
         lock.lock()
-        items.append((tab, c))
+        items.append((tab, c, Date()))
         if items.count > 8 { items.removeFirst(items.count - 8) }
         note("push \(c) → \(tab.isEmpty ? "legacy" : tab)")
         lock.unlock()
@@ -38,13 +42,21 @@ final class CommandQueue {
     /// Commands are addressed: a tab drains only its own (tab "" is the
     /// legacy untargeted lane), so with several players open one tab can't
     /// steal another's button press — the old popAll() did exactly that.
-    func pop(for tab: String) -> [String] {
+    func pop(for tab: String, now: Date = Date()) -> [String] {
         lock.lock()
         defer { lock.unlock() }
+        lastPoll = lastPoll.filter { now.timeIntervalSince($0.value) < 45 }
+        if !tab.isEmpty, lastPoll.count < 128 || lastPoll[tab] != nil { lastPoll[tab] = now }
+        if let maxAge { items.removeAll { now.timeIntervalSince($0.created) > maxAge } }
         let mine = items.filter { $0.tab == tab }.map(\.cmd)
         items.removeAll { $0.tab == tab }
         if !mine.isEmpty { note("pop \(tab.isEmpty ? "legacy" : tab) ← \(mine.joined(separator: ","))") }
         return mine
+    }
+
+    func isConnected(_ client: String, now: Date = Date()) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return lastPoll[client].map { now.timeIntervalSince($0) < 45 } ?? false
     }
 
     /// Every push/pop with timestamps — the forensics for "who paused my
@@ -68,12 +80,14 @@ final class EventServer {
     var browserToken = ""
     /// Optional: POST /music/commands → (command, explicit tab or nil).
     var onMusicCommand: ((String, String?) -> Void)?
+    var onBrowserFocus: ((String, Bool) -> Void)?
     let musicCommands = CommandQueue()
+    let browserCommands = CommandQueue(maxAge: 5)
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "agenthud.server")
     /// Long-polls waiting for a command (server-queue confined). Answered the
     /// instant a command is pushed — click-to-audio without the poll gap.
-    private var parked: [(tab: String, conn: NWConnection, timeout: DispatchWorkItem, origin: String?)] = []
+    private var parked: [(tab: String, conn: NWConnection, timeout: DispatchWorkItem, origin: String?, browser: Bool)] = []
     private let lock = NSLock()
     private var received = 0
     private var musicReceived = 0
@@ -94,6 +108,10 @@ final class EventServer {
         musicCommands.onPush = { [weak self] tab in
             guard let self else { return }
             self.queue.async { self.deliverParked(tab) }
+        }
+        browserCommands.onPush = { [weak self] client in
+            guard let self else { return }
+            self.queue.async { self.deliverParked(client, browser: true) }
         }
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
@@ -118,6 +136,7 @@ final class EventServer {
         listener?.cancel()
         listener = nil
         musicCommands.onPush = nil
+        browserCommands.onPush = nil
         // Answer anyone still parked rather than leaving their request to
         // die on the wire — tabs treat a dropped poll as the HUD going away.
         queue.async { [weak self] in
@@ -223,9 +242,14 @@ final class EventServer {
                 tab: (obj["tab"] as? String) ?? ""
             ))
             respond(conn, status: "200 OK", body: #"{"ok":true}"#, origin: origin)
-        case ("GET", "/music/commands"):
-            let tab = Self.queryValue(query, "tab") ?? ""
-            let cmds = musicCommands.pop(for: tab)
+        case ("GET", "/music/commands"), ("GET", "/browser/commands"):
+            let browser = path == "/browser/commands"
+            let tab = Self.queryValue(query, browser ? "client" : "tab") ?? ""
+            if browser, UUID(uuidString: tab) == nil {
+                respond(conn, status: "400 Bad Request", body: #"{"ok":false}"#, origin: origin)
+                return
+            }
+            let cmds = (browser ? browserCommands : musicCommands).pop(for: tab)
             // wait=1 opts into long-polling: an empty answer parks until a
             // command lands or ~20s passes. Legacy clients keep instant
             // empties, exactly as before.
@@ -237,7 +261,7 @@ final class EventServer {
                     self.parked.removeAll { $0.conn === conn }
                     self.respondCommands(conn, [], origin: origin)
                 }
-                parked.append((tab, conn, timeout, origin))
+                parked.append((tab, conn, timeout, origin, browser))
                 if parked.count > 16 {  // runaway guard: oldest answers empty
                     let old = parked.removeFirst()
                     old.timeout.cancel()
@@ -254,6 +278,15 @@ final class EventServer {
                 return
             }
             onMusicCommand?(cmd, obj["tab"] as? String)
+            respond(conn, status: "200 OK", body: #"{"ok":true}"#, origin: origin)
+        case ("POST", "/browser/focus-result"):
+            guard let obj = try? JSONSerialization.jsonObject(with: req.body) as? [String: Any],
+                  let id = obj["id"] as? String, UUID(uuidString: id) != nil,
+                  let ok = obj["ok"] as? Bool else {
+                respond(conn, status: "400 Bad Request", body: #"{"ok":false}"#, origin: origin)
+                return
+            }
+            onBrowserFocus?(id, ok)
             respond(conn, status: "200 OK", body: #"{"ok":true}"#, origin: origin)
         case ("POST", "/event"):
             guard
@@ -336,11 +369,11 @@ final class EventServer {
     }
 
     /// Answer every parked poll whose lane just received a command.
-    private func deliverParked(_ tab: String) {
-        var kept: [(tab: String, conn: NWConnection, timeout: DispatchWorkItem, origin: String?)] = []
+    private func deliverParked(_ tab: String, browser: Bool = false) {
+        var kept: [(tab: String, conn: NWConnection, timeout: DispatchWorkItem, origin: String?, browser: Bool)] = []
         for p in parked {
-            guard p.tab == tab else { kept.append(p); continue }
-            let cmds = musicCommands.pop(for: p.tab)
+            guard p.tab == tab, p.browser == browser else { kept.append(p); continue }
+            let cmds = (browser ? browserCommands : musicCommands).pop(for: p.tab)
             if cmds.isEmpty { kept.append(p); continue }
             p.timeout.cancel()
             respondCommands(p.conn, cmds, origin: p.origin)

@@ -10,6 +10,9 @@ import re
 import socket
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hud_focus import capture_focus, remember_focus
+
 try:
     _user = getpass.getuser()
 except Exception:
@@ -170,8 +173,7 @@ def main():
         "v": 2,
         "app": "claude",
         "outcome": outcome,
-        "focus": {"workspace": os.environ.get("CMUX_WORKSPACE_ID", ""),
-                  "surface": os.environ.get("CMUX_SURFACE_ID", "")},
+        "focus": remember_focus("claude", d.get("session_id", ""), capture_focus()),
         "event": kind,
         "host": os.environ.get("AGENT_HUD_HOST") or socket.gethostname().split(".")[0],
         "project": os.path.basename(cwd.rstrip("/")) or cwd,

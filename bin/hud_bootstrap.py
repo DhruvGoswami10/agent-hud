@@ -14,7 +14,7 @@ sys.path.insert(0, str(BIN))
 from hud_config import atomic_write
 
 FILES = ('agent-hud-send', 'agent-hud-payload.py', 'agent-hud-registry',
-         'install-hooks.py', 'hud_config.py', 'agent-hud-codex', 'agent-hud-cursor')
+         'install-hooks.py', 'hud_config.py', 'hud_focus.py', 'agent-hud-codex', 'agent-hud-cursor')
 OPTIONS = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'PermitLocalCommand=no',
            '-o', 'ClearAllForwardings=yes']
 # The upload manifest contains the filename too. Match an executable path,

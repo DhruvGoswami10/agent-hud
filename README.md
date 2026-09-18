@@ -29,9 +29,9 @@ location to return to the work.
 
 <p align="center"><img src="assets/notch.gif" alt="Agent activity beside the MacBook notch" width="760"></p>
 
-**Version 0.2.2** stops notification loops that immediately reopened dismissed
-popups. It includes the 0.2.1 click and mute fixes and the 0.2.0 reliability
-release. See [CHANGELOG.md](CHANGELOG.md)
+**Version 0.3.0** restores responsive hover after dismissing a popup and returns
+you to recorded terminal panes and browser conversations. It includes the
+notification and permission fixes from 0.2.2. See [CHANGELOG.md](CHANGELOG.md)
 and the [audit resolution notes](docs/reliability-release.md).
 
 ## Install
@@ -125,10 +125,28 @@ version health, browser pairing, and optional Watch connectivity.
 
 Hover or click the notch/edge to open it. ⌥⎋ dismisses it. Keyboard focus and
 accessible actions are available for session selection and clipboard chips.
-Recorded cmux workspace/surface IDs open the matching local pane. Browser cards
-open their conversation URL; Cursor cards can open the workspace. **Open app**
-means no exact session locator was supplied. Remote terminal navigation is not
-inferred from a remote filesystem path.
+Moving back onto the notch after dismissing a popup starts a fresh hover;
+leaving the pointer still keeps the popup dismissed.
+
+| Source | Where the session button takes you |
+| --- | --- |
+| cmux | Recorded workspace and pane, including a local pane hosting SSH |
+| Warp | Original pane via `WARP_FOCUS_URL` on supported Warp versions |
+| Terminal / iTerm2 | Recorded local tab or pane; macOS Automation access may be requested on the first click |
+| ChatGPT / Claude web | Existing conversation tab and window through the paired 0.3.0 bridge; a closed tab reopens its conversation link |
+| Cursor | Local workspace folder |
+| Other terminals | Recorded app, when the integration can identify it |
+
+**Open app** means no supported exact locator was supplied. Older sessions gain
+a location on their next hooked agent turn. A remote filesystem path or TTY
+cannot identify a local SSH tab: the hook must receive the local cmux IDs or
+Warp focus URL. An unavailable browser bridge falls back to the conversation
+link; a failed command keeps an explicit link button visible.
+
+Hook locations survive reporter refreshes and app restarts. They are kept in
+private `session-focus/` files under the Mac's AgentHUD Application Support
+directory (or `~/.cache/agent-hud/` remotely), capped at 256 entries and expired
+after 24 hours. The uninstall script removes these location records.
 
 On displays without a notch, choose either edge, drag the grip, or use the height
 slider. Placement is clamped to the visible screen. Try `make playground-edge`
@@ -137,8 +155,9 @@ slider. Placement is clamped to the visible screen. Try `make playground-edge`
 ## Browser bridge
 
 Install and pair the [browser extension](extension/README.md) for Chrome-based
-browsers or Safari. Version 0.2.0 requires a pairing key copied from Settings →
-Connections. Reload chat/music tabs after updating the extension.
+browsers or Safari. Pair using the key copied from Settings → Connections.
+Reload the extension and chat/music tabs after updating to 0.3.0. Existing
+pairing keys remain valid; exact conversation navigation needs the updated bridge.
 
 Chat activity is inferred from page markup. Navigation, closed tabs, missing
 completion evidence, and user stops never claim a successful response. Site

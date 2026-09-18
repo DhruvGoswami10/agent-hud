@@ -136,4 +136,118 @@ for (const [provider, initial, canonical] of [["chatgpt", "/", "/c/test"], ["cla
     assert.equal(events.at(-1).outcome, "unknown");
   });
 }
+async function asyncTest(name, fn) {
+  run++;
+  try { await fn(); console.log("ok   " + name); }
+  catch (e) { console.error("FAIL " + name + "\n     " + e.stack); process.exitCode = 1; }
+}
+
+async function browserFixture(tabs = []) {
+  const calls = [], requests = [], delays = [];
+  const client = "a1459d36-9666-44b4-bd6d-b27a5f97b0d9";
+  let receive, key = "", nextCommands = [], windowFails = false;
+  const runtime = { getURL: () => "chrome-extension://test/", lastError: null,
+    onMessage: { addListener: fn => { receive = fn; } }, onStartup: { addListener() {} } };
+  const session = {};
+  const context = {
+    URL, Date, Number, Promise, crypto: { randomUUID: () => client },
+    AbortSignal: { timeout() {} },
+    setTimeout: (fn, ms) => { delays.push(ms); queueMicrotask(fn); },
+    chrome: { runtime,
+      storage: { session: { get: (_k, cb) => cb(session), set: (v, cb) => { Object.assign(session, v); cb(); } },
+        local: { get: (_k, cb) => cb({ pairingKey: key }) }, onChanged: { addListener() {} } },
+      tabs: {
+        get: (id, cb) => cb(tabs.find(t => t.id === id)),
+        query: (_q, cb) => cb(tabs),
+        sendMessage: (id, _msg, cb) => cb({ url: tabs.find(t => t.id === id)?.url }),
+        update: (id, opts, cb) => { calls.push(["tab", id, opts]); cb(tabs.find(t => t.id === id)); },
+        create: (opts, cb) => { calls.push(["create", opts]); cb({ id: 99, windowId: 8, url: opts.url }); },
+      },
+      windows: { update: (id, opts, cb) => {
+        calls.push(["window", id, opts]); runtime.lastError = windowFails ? { message: "closed" } : null;
+        cb(); runtime.lastError = null;
+      } },
+    },
+    fetch: async (url, opts) => {
+      requests.push({ url, opts });
+      if (url.includes("/browser/commands")) {
+        const commands = nextCommands; nextCommands = [];
+        return { ok: commands.length > 0, status: commands.length ? 200 : 403, json: async () => ({ commands }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(here, "..", "extension", "bg.js"), "utf8"), context);
+  await new Promise(resolve => setImmediate(resolve)); // initial unpaired poll finishes
+  return { context, calls, requests, delays, client,
+    pair: () => { key = "test-only-key"; },
+    commands: value => { nextCommands = value.map(JSON.stringify); },
+    failWindow: () => { windowFails = true; },
+    message: (msg, sender) => new Promise(resolve => receive(msg, sender, resolve)),
+  };
+}
+const focusCommand = (extra = {}) => ({ id: "e13f2348-1b32-4206-bca2-042bdac9f359", tab: "12",
+  url: "https://chatgpt.com/c/one", expires: Date.now() + 5000, ...extra });
+
+await asyncTest("browser focuses the original conversation tab and its window", async () => {
+  const b = await browserFixture([{ id: 12, windowId: 4, url: "https://chatgpt.com/c/one" }]);
+  assert.equal(await b.context.focusConversation(focusCommand()), true);
+  assert.deepEqual(b.calls.map(c => c.slice(0, 2)), [["tab", 12], ["window", 4]]);
+});
+await asyncTest("a navigated tab is skipped in favor of the existing matching conversation", async () => {
+  const b = await browserFixture([{ id: 12, windowId: 4, url: "https://chatgpt.com/c/other" },
+    { id: 14, windowId: 6, url: "https://chatgpt.com/c/one" }]);
+  assert.equal(await b.context.focusConversation(focusCommand()), true);
+  assert.deepEqual(b.calls.map(c => c.slice(0, 2)), [["tab", 14], ["window", 6]]);
+});
+await asyncTest("a closed conversation tab reopens only its recorded link", async () => {
+  const b = await browserFixture();
+  assert.equal(await b.context.focusConversation(focusCommand()), true);
+  assert.equal(b.calls[0][0], "create");
+  assert.equal(b.calls[0][1].url, "https://chatgpt.com/c/one");
+});
+await asyncTest("expired commands and unsupported links cannot navigate", async () => {
+  const b = await browserFixture();
+  for (const url of ["https://example.com/", "javascript:alert(1)", "https://chatgpt.com:8000/c/one",
+    "https://user@chatgpt.com/c/one"]) {
+    assert.equal(await b.context.focusConversation(focusCommand({ url })), false);
+  }
+  assert.equal(await b.context.focusConversation(focusCommand({ expires: Date.now() - 1 })), false);
+  assert.equal(await b.context.focusConversation(focusCommand({ tab: "not a tab" })), false);
+  assert.equal(b.calls.length, 0);
+});
+await asyncTest("window activation errors are reported instead of claiming success", async () => {
+  const b = await browserFixture([{ id: 12, windowId: 4, url: "https://chatgpt.com/c/one" }]);
+  b.failWindow();
+  assert.equal(await b.context.focusConversation(focusCommand()), false);
+});
+await asyncTest("web events capture the sender's real tab and browser identity", async () => {
+  const b = await browserFixture(); b.pair();
+  const reply = await b.message({ type: "hud", path: "/event", body: { host: "web", event: "running",
+    focus: { url: "https://chatgpt.com/c/one", browser_tab: "999", browser_client: "forged" } } },
+    { tab: { id: 12 }, url: "https://chatgpt.com/c/one" });
+  assert.equal(reply.ok, true);
+  const body = JSON.parse(b.requests.find(r => r.url.endsWith("/event")).opts.body);
+  assert.equal(body.focus.browser_tab, "12");
+  assert.equal(body.focus.browser_client, b.client);
+  assert.equal(body.focus.application, "com.google.Chrome");
+  assert.equal(body.pairingKey, undefined);
+});
+await asyncTest("the command loop acknowledges focus and retains a polling floor", async () => {
+  const b = await browserFixture([{ id: 12, windowId: 4, url: "https://chatgpt.com/c/one" }]);
+  b.pair(); b.commands([focusCommand()]);
+  await b.context.pollFocusCommands();
+  const ack = b.requests.find(r => r.url.endsWith("/browser/focus-result"));
+  assert.equal(JSON.parse(ack.opts.body).ok, true);
+  assert.equal(JSON.parse(ack.opts.body).id, focusCommand().id);
+  assert.ok(b.delays.includes(250));
+});
+await asyncTest("content scripts cannot forge a browser focus acknowledgment", async () => {
+  const b = await browserFixture(); b.pair();
+  const reply = await b.message({ type: "hud", path: "/browser/focus-result", body: { ok: true } }, { tab: { id: 12 } });
+  assert.equal(reply.status, 400);
+  assert.equal(b.requests.length, 0);
+});
+
 console.log(`\n${run} extension tests`);
