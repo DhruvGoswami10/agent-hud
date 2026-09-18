@@ -11,6 +11,12 @@ final class AppState: ObservableObject {
     @Published private(set) var clipboard: [ClipboardItem] = []
     @Published private(set) var pendingAttention = 0
     @Published private(set) var eventsReceived = 0
+    private struct DeliveryID: Equatable {
+        let source: String
+        let kind: EventKind
+        let id: String
+    }
+    private var recentDeliveries: [DeliveryID] = []
     @Published var listenerStatus = "starting"
     @Published var reporterStatus = "starting"
     @Published var reporterProblem = ""
@@ -531,6 +537,12 @@ final class AppState: ObservableObject {
     func apply(_ rawEvent: AgentEvent) {
         let event = rawEvent.with(host: Host.normalize(rawEvent.host))
         eventsReceived += 1
+        if !event.eventID.isEmpty {
+            let delivery = DeliveryID(source: event.sourceKey, kind: event.kind, id: event.eventID)
+            guard !recentDeliveries.contains(delivery) else { return }
+            recentDeliveries.append(delivery)
+            if recentDeliveries.count > 256 { recentDeliveries.removeFirst() }
+        }
         events.insert(event, at: 0)
         if events.count > 150 { events.removeLast(events.count - 150) }
 

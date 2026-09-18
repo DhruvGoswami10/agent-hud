@@ -16,6 +16,7 @@ HOST = os.environ.get("AGENT_HUD_HOST") or socket.gethostname().split(".")[0]
 # Written by the installer: the notify program we displaced, argv and all.
 CHAIN = os.path.join(os.environ.get("AGENT_HUD_CODEX_DIR", os.path.expanduser("~/.codex")),
                      "agent-hud-chain.json")
+NOTIFY_GUARD = "AGENT_HUD_CODEX_NOTIFY_ACTIVE"
 
 
 def post(body):
@@ -42,7 +43,7 @@ def payload(argv):
 
 
 def handoff(argv):
-    """Run whatever `notify` pointed at before we took the slot."""
+    """Preserve the previous notifier without cycling through its own chain."""
     try:
         with open(CHAIN) as f:
             original = json.load(f)
@@ -51,7 +52,11 @@ def handoff(argv):
     if not isinstance(original, list) or not original or not all(isinstance(x, str) for x in original):
         return
     try:
-        subprocess.run(list(original) + argv, timeout=20, check=False)
+        # Computer Use and other wrappers can retain this script as their
+        # previous notifier. The marker follows their child processes too;
+        # a re-entry must skip both posting and another handoff.
+        env = dict(os.environ, **{NOTIFY_GUARD: "1"})
+        subprocess.run(list(original) + argv, timeout=20, check=False, env=env)
     except Exception:
         pass
 
@@ -60,6 +65,8 @@ def main():
     argv = sys.argv[1:]
     d = payload(argv)
     is_notify = bool(d)
+    if is_notify and os.environ.get(NOTIFY_GUARD) == "1":
+        return
     if not is_notify and not sys.stdin.isatty():
         try:
             d = json.loads(sys.stdin.read(1_048_576))
@@ -106,6 +113,11 @@ def main():
             "focus": {"workspace": os.environ.get("CMUX_WORKSPACE_ID", ""),
                       "surface": os.environ.get("CMUX_SURFACE_ID", "")},
         }
+        turn = d.get("turn-id") or d.get("turn_id")
+        if is_notify and isinstance(turn, str) and turn:
+            # A retry of one completion must not resurrect a dismissed peek.
+            # The receiver scopes this ID to the host, app and conversation.
+            body["event_id"] = "notify:" + turn
         if event:
             post(body)
     if is_notify:

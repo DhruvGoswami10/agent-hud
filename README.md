@@ -29,8 +29,9 @@ location to return to the work.
 
 <p align="center"><img src="assets/notch.gif" alt="Agent activity beside the MacBook notch" width="760"></p>
 
-**Version 0.2.1** fixes notification dismissal and muting on top of the 0.2.0
-reliability release. See [CHANGELOG.md](CHANGELOG.md)
+**Version 0.2.2** stops notification loops that immediately reopened dismissed
+popups. It includes the 0.2.1 click and mute fixes and the 0.2.0 reliability
+release. See [CHANGELOG.md](CHANGELOG.md)
 and the [audit resolution notes](docs/reliability-release.md).
 
 ## Install
@@ -188,7 +189,13 @@ Events: `running`, `attention`, `done`, `info`. Outcomes: `finished`, `interrupt
 `error`, `unknown`. Include a stable `app` and `session_id`; identity includes the
 host and provider. Legacy Claude events remain compatible. Optional `focus`
 metadata accepts validated cmux UUIDs or supported conversation URLs, never shell
-commands. `GET /health` is a liveness check; `/debug` has local diagnostics;
+commands. Retrying clients can include an `event_id` that stays the same for
+retries and changes for each new event. The app remembers the last 256 delivery
+IDs per launch, scoped by source and event kind; repeats cannot reopen a
+dismissed popup, replay sounds, or overwrite newer session state. Codex completion
+notifications use their turn ID automatically.
+
+`GET /health` is a liveness check; `/debug` has local diagnostics;
 `/watch` is the compact snapshot. Treat diagnostics as private session data.
 
 ## Updating and uninstalling

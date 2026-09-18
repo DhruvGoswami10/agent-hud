@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.2 — 2026-09-18
+
+- Stop recursive Codex notifier chains, including wrappers that retain Agent
+  HUD as their previous notifier. The original notifier still runs once.
+- Ignore repeated delivery IDs before changing session state or showing a
+  popup. Codex completion retries no longer reopen a dismissed notification
+  or mark a newer run as finished.
+- Reproduced the live failure with a repeated completion stream: both × and
+  clicking the popup now keep it dismissed while retries continue.
+- Six new regressions cover the notifier cycle, delivery IDs, dismissal,
+  session state, source isolation and legacy events. Mac app and bundled
+  Codex adapter updated; browser, reporter, Safari and Watch versions remain 0.2.0.
+
 ## 0.2.1 — 2026-09-18
 
 - Slide-outs accept the first click while another app is active; clicking no

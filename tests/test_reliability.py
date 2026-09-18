@@ -4,10 +4,15 @@ import importlib.machinery
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
+import threading
 import time
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
 BIN = Path(__file__).resolve().parents[1] / "bin"
@@ -22,6 +27,65 @@ def script(name):
 
 
 class AdapterTests(unittest.TestCase):
+    def test_codex_notify_wrapper_cannot_reenter_the_hud(self):
+        # The live chain was HUD -> Computer Use -> --previous-notify HUD.
+        # Bound the fake wrapper itself so the old code fails without leaving
+        # a real runaway process tree behind.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            calls = root / "wrapper-calls"
+            wrapper = root / "wrapper.py"
+            wrapper.write_text("""import json, pathlib, subprocess, sys
+calls = pathlib.Path(sys.argv[1])
+count = int(calls.read_text()) + 1 if calls.exists() else 1
+calls.write_text(str(count))
+if count < 3:
+    subprocess.run(json.loads(sys.argv[3]) + [sys.argv[4]], check=True)
+""")
+            previous = [sys.executable, str(BIN / "agent-hud-codex")]
+            chain = [sys.executable, str(wrapper), str(calls), "--previous-notify", json.dumps(previous)]
+            (root / "agent-hud-chain.json").write_text(json.dumps(chain))
+            received = []
+
+            class Handler(BaseHTTPRequestHandler):
+                def do_POST(self):
+                    received.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+                    self.send_response(200)
+                    self.end_headers()
+
+                def log_message(self, *args):
+                    pass
+
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            try:
+                env = dict(os.environ, AGENT_HUD_CODEX_DIR=tmp,
+                           AGENT_HUD_URL="http://127.0.0.1:%d" % server.server_port)
+                env.pop("AGENT_HUD_CODEX_NOTIFY_ACTIVE", None)
+                data = {"type": "agent-turn-complete", "thread-id": "thread", "turn-id": "turn"}
+                subprocess.run(previous + [json.dumps(data)], env=env, check=True, timeout=10,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            finally:
+                server.shutdown()
+                server.server_close()
+                worker.join()
+            self.assertEqual(len(received), 1, "a chained notifier must not repost the same completion")
+            self.assertEqual(calls.read_text(), "1", "the previous notifier should still run exactly once")
+
+    def test_codex_retries_have_stable_ids_but_new_turns_are_distinct(self):
+        m = script("agent-hud-codex")
+        ids = []
+        for turn in ("one", "one", "two"):
+            data = {"type": "agent-turn-complete", "thread-id": "thread", "turn-id": turn}
+            with patch.object(m.sys, "argv", ["codex-hook", json.dumps(data)]), \
+                    patch.object(m, "post") as post, patch.object(m, "handoff"):
+                m.main()
+            ids.append(post.call_args[0][0].get("event_id"))
+        self.assertTrue(ids[0])
+        self.assertEqual(ids[0], ids[1])
+        self.assertNotEqual(ids[0], ids[2])
+
     def test_remote_restart_filter_excludes_the_updater_manifest(self):
         import re
         m = script("hud_bootstrap.py")

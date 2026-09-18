@@ -182,6 +182,8 @@ struct AgentEvent: Identifiable {
     var app: String = ""
     var outcome: SessionOutcome = .finished
     var focus: SessionFocus = SessionFocus()
+    /// Optional stable delivery identity supplied by retrying integrations.
+    var eventID: String = ""
     let image: NSImage?
     let ts: Date
 
@@ -197,7 +199,8 @@ struct AgentEvent: Identifiable {
     func with(host newHost: String) -> AgentEvent {
         AgentEvent(kind: kind, host: newHost, project: project, sessionId: sessionId,
                    sessionName: sessionName, message: message, hook: hook,
-                   model: model, app: app, outcome: outcome, focus: focus, image: image, ts: ts)
+                   model: model, app: app, outcome: outcome, focus: focus,
+                   eventID: eventID, image: image, ts: ts)
     }
 
     static func from(json: [String: Any]) -> AgentEvent? {
@@ -222,6 +225,7 @@ struct AgentEvent: Identifiable {
             app: (json["app"] as? String) ?? (json["hook"] == nil ? "generic" : "claude"),
             outcome: .from(json["outcome"] as? String, message: (json["message"] as? String) ?? ""),
             focus: SessionFocus(json: json["focus"] as? [String: Any] ?? [:], cwd: json["cwd"] as? String ?? ""),
+            eventID: (json["event_id"] as? String) ?? "",
             image: image,
             ts: Date()
         )

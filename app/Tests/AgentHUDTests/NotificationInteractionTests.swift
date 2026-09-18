@@ -4,6 +4,52 @@ import SwiftUI
 
 @MainActor
 final class NotificationInteractionTests: XCTestCase {
+    private func completion(_ id: String, host: String = "test") -> AgentEvent {
+        AgentEvent.from(json: ["event": "done", "host": host, "app": "codex",
+                              "session_id": "S", "message": "Finished", "event_id": id])!
+    }
+
+    func testRetriedCompletionStaysDismissed() {
+        let state = AppState()
+        state.muted = false
+        state.apply(completion("turn-one"))
+        state.dismissNow()
+        for _ in 0..<20 { state.apply(completion("turn-one")) }
+        XCTAssertTrue(state.hudState.isCollapsed, "a repeated event must not undo the user's dismissal")
+        XCTAssertEqual(state.events.count, 1, "retries must not flood the event history")
+        XCTAssertEqual(state.alertLog.count, 1, "retries must not repeat banners or sounds")
+        state.apply(completion("turn-two"))
+        guard case .peek = state.hudState else { return XCTFail("a new turn should still notify") }
+    }
+
+    func testOldCompletionRetryCannotFinishANewRun() {
+        let state = AppState()
+        state.apply(completion("turn-one"))
+        state.apply(AgentEvent.from(json: ["event": "running", "host": "test", "app": "codex",
+                                           "session_id": "S", "message": "Working"])!)
+        state.dismissNow()
+        state.apply(completion("turn-one"))
+        XCTAssertEqual(state.sessions.first?.kind, .running)
+        XCTAssertTrue(state.hudState.isCollapsed)
+    }
+
+    func testEventIDsAreScopedToTheirSource() {
+        let state = AppState()
+        state.apply(completion("same-id", host: "box-one"))
+        state.apply(completion("same-id", host: "box-two"))
+        XCTAssertEqual(state.events.count, 2)
+        XCTAssertEqual(state.sessions.count, 2)
+    }
+
+    func testLegacyEventsWithoutIDsStillNotify() {
+        let state = AppState()
+        state.muted = false
+        state.apply(completion(""))
+        state.dismissNow()
+        state.apply(completion(""))
+        guard case .peek = state.hudState else { return XCTFail("legacy integrations remain supported") }
+    }
+
     func testHUDHandlesTheFirstClickWhileAnotherAppIsActive() {
         let hosting = HUDHostingView(rootView: Text("A notification"))
         XCTAssertTrue(hosting.acceptsFirstMouse(for: nil),
