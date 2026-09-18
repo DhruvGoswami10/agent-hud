@@ -43,6 +43,11 @@ be available on PATH. Release builds are ad-hoc signed, not Apple notarized.
 If Gatekeeper blocks a download, use System Settings → Privacy & Security →
 Open Anyway after checking its source and the release checksums.
 
+Ad-hoc builds can lose macOS permission grants when replaced by a new build.
+Keep Awake and popup dismissal work without Accessibility. Optional idle-lock
+prevention requires that grant; enable it from Settings → Awake when needed.
+The app does not request Accessibility automatically on launch.
+
 Install the integrations you use:
 
 ```sh

@@ -1,6 +1,33 @@
 import XCTest
 @testable import AgentHUD
 
+@MainActor
+final class AwakePermissionTests: XCTestCase {
+    func testRestoringADisplayHoldDoesNotRequestAccessibility() {
+        var prompts = 0
+        let engine = Caffeine(accessibilityTrusted: { false }, accessibilityPrompt: { prompts += 1 })
+        defer { _ = engine.set(mode: .off) }
+        _ = engine.set(mode: .display)
+        XCTAssertEqual(engine.mode, .display, "ordinary keep-awake still works without Accessibility")
+        XCTAssertEqual(prompts, 0, "restoring a saved hold after an update must not prompt again")
+    }
+
+    func testIdleResetPermissionIsRequestedOnlyWhenExplicitlyAsked() {
+        var prompts = 0
+        let engine = Caffeine(accessibilityTrusted: { false }, accessibilityPrompt: { prompts += 1 })
+        engine.requestIdleResetAccess()
+        engine.requestIdleResetAccess()
+        XCTAssertEqual(prompts, 1)
+    }
+
+    func testExistingAccessibilityGrantDoesNotPrompt() {
+        var prompts = 0
+        let engine = Caffeine(accessibilityTrusted: { true }, accessibilityPrompt: { prompts += 1 })
+        engine.requestIdleResetAccess()
+        XCTAssertEqual(prompts, 0)
+    }
+}
+
 /// Timed holds, the display/system split, and the assertion bookkeeping the
 /// "does the awake button actually work?" audit turned up.
 final class TimedHoldTests: XCTestCase {

@@ -249,7 +249,8 @@ struct SettingsView: View {
                 Section("Idle lock permission") {
                     Text("Keeping the display on works. Resetting the idle timer requires Accessibility access.")
                         .font(.caption).foregroundStyle(.secondary)
-                    Button("Open Accessibility Settings") {
+                    Button("Allow idle-lock prevention…") {
+                        Caffeine.shared.requestIdleResetAccess()
                         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
                     }
                 }

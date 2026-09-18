@@ -38,6 +38,17 @@ final class Caffeine {
     private var userActivityID = IOPMAssertionID(0)
     private var timer: Timer?
     private var promptedForAccessibility = false
+    private let accessibilityTrusted: () -> Bool
+    private let accessibilityPrompt: () -> Void
+
+    init(accessibilityTrusted: @escaping () -> Bool = { AXIsProcessTrusted() },
+         accessibilityPrompt: @escaping () -> Void = {
+             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+             _ = AXIsProcessTrustedWithOptions(options)
+         }) {
+        self.accessibilityTrusted = accessibilityTrusted
+        self.accessibilityPrompt = accessibilityPrompt
+    }
 
     var assertionAlive: Bool {
         guard let created = assertionCreatedAt else { return false }
@@ -48,7 +59,7 @@ final class Caffeine {
     nonisolated static let renewInterval: TimeInterval = 15
     nonisolated static let jiggleAfterIdle: TimeInterval = 40  // < macOS's 1-min minimum lock
 
-    var jiggleAuthorized: Bool { AXIsProcessTrusted() }
+    var jiggleAuthorized: Bool { accessibilityTrusted() }
 
     /// Idempotent; cheap to call on every state change. Returns whether a
     /// live assertion backs the requested (non-off) mode.
@@ -63,7 +74,6 @@ final class Caffeine {
         guard mode != .off else { return true }
         if mode == .display {
             relightDisplay()
-            promptForAccessibilityIfNeeded()
         }
         return renewAssertion()
     }
@@ -143,6 +153,7 @@ final class Caffeine {
     /// the current position is invisible to the user but resets the timer.
     /// CGWarpMouseCursorPosition would NOT work — it bypasses HID.
     private func jiggleIfIdle() {
+        guard jiggleAuthorized else { return }
         guard let idle = Self.hidIdleSeconds(), idle >= Self.jiggleAfterIdle else { return }
         guard let pos = CGEvent(source: nil)?.location,
               let ev = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
@@ -161,10 +172,12 @@ final class Caffeine {
         return Double(idleNs) / 1_000_000_000
     }
 
-    private func promptForAccessibilityIfNeeded() {
-        guard !AXIsProcessTrusted(), !promptedForAccessibility else { return }
+    /// Only an explicit action in Settings may request this optional access.
+    /// Restoring a display hold after an update must stay quiet, even when
+    /// macOS no longer recognizes an ad-hoc build's earlier permission grant.
+    func requestIdleResetAccess() {
+        guard !jiggleAuthorized, !promptedForAccessibility else { return }
         promptedForAccessibility = true
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
+        accessibilityPrompt()
     }
 }

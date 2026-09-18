@@ -9,8 +9,11 @@
   or mark a newer run as finished.
 - Reproduced the live failure with a repeated completion stream: both × and
   clicking the popup now keep it dismissed while retries continue.
-- Six new regressions cover the notifier cycle, delivery IDs, dismissal,
-  session state, source isolation and legacy events. Mac app and bundled
+- Restoring Keep Awake no longer requests Accessibility at launch. Ordinary
+  display/system holds work without it; optional idle-lock prevention asks
+  only when enabled explicitly in Settings.
+- Nine new regressions cover the notifier cycle, delivery IDs, dismissal,
+  session state, source isolation, legacy events and permission requests. Mac app and bundled
   Codex adapter updated; browser, reporter, Safari and Watch versions remain 0.2.0.
 
 ## 0.2.1 — 2026-09-18
