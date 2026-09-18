@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.2 — 2026-09-18
+
+- Select cmux sessions through its native scripting interface. The previous
+  navigation URL could switch away from cmux's full-screen desktop on an
+  external monitor, even with the HUD closed. Match the recorded workspace
+  and terminal IDs and wait for cmux's reply before reporting success.
+- Request Automation access to cmux only when **Go to session** is clicked.
+  A denied grant gets a specific explanation; closed or missing terminals
+  get a separate error. Accessibility and cmux's private control socket are
+  not needed for navigation.
+- Dismiss the HUD and release its keyboard focus before opening a session,
+  so a late panel dismissal cannot interfere with the destination's focus.
+- Use normal AppKit window ordering to release panel focus instead of calling
+  the `resignKey` notification directly. Mouse interactions claim keyboard
+  focus only when needed; the collapsed indicators and hover behavior remain.
+- Browser navigation uses the same focus handoff and still waits for its
+  acknowledgment. Failed navigation reopens the panel with an explanation.
+- Three regression tests reproduce the old handoff ordering and cover native
+  success, native failure, and browser dispatch.
+- Mac advances to 0.3.2. Reporter remains 0.3.1, browser/Safari 0.3.0, Watch
+  0.2.0, and the event protocol remains version 2.
+
 ## 0.3.1 — 2026-09-18
 
 - Return to the original cmux pane for remote Claude sessions over ordinary

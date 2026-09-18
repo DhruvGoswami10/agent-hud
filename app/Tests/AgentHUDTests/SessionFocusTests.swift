@@ -35,12 +35,14 @@ final class SessionFocusTests: XCTestCase {
         XCTAssertEqual(valid.actionTitle, "Go to session")
     }
 
-    func testCmuxUsesItsPublicNavigationLinkFromStandaloneApps() {
+    func testCmuxNavigationUsesValidatedWorkspaceAndSurfaceIdentifiers() {
         let focus = SessionFocus(json: ["workspace": workspace, "surface": surface])
-        XCTAssertEqual(focus.cmuxURL?.absoluteString, "cmux://workspace/" + workspace + "/surface/" + surface)
-        XCTAssertEqual(SessionFocus(json: ["workspace": workspace]).cmuxURL?.absoluteString,
-                       "cmux://workspace/" + workspace)
-        XCTAssertNil(SessionFocus(json: ["workspace": "../../anything"]).cmuxURL)
+        XCTAssertTrue(focus.canJumpBack(app: "claude", local: false))
+        XCTAssertEqual(focus.workspace, workspace)
+        XCTAssertEqual(focus.surface, surface)
+        XCTAssertTrue(SessionFocus(json: ["workspace": "../../anything"]).workspace.isEmpty)
+        XCTAssertTrue(SessionFocus(json: ["workspace": workspace, "surface": "not-a-pane"]).surface.isEmpty)
+        XCTAssertFalse(SessionFocus(json: ["surface": surface]).canJumpBack(app: "claude", local: true))
     }
 
     func testRemoteSSHConnectionIsNavigableAndSurvivesSparseRefreshes() {
@@ -77,7 +79,7 @@ final class SessionFocusTests: XCTestCase {
         XCTAssertEqual(object["tab"] as? String, "12")
         XCTAssertEqual(object["url"] as? String, "https://chatgpt.com/c/one")
         XCTAssertTrue(state.navigationBusy)
-        XCTAssertTrue(state.hudState.isOpen)
+        XCTAssertTrue(state.hudState.isCollapsed, "release the HUD before the browser changes Spaces")
         state.focusSession(try XCTUnwrap(state.sessions.first))
         XCTAssertTrue(queue.pop(for: workspace).isEmpty, "repeated clicks must not queue another focus")
         state.browserFocusFinished(id: UUID().uuidString, ok: true)
@@ -85,6 +87,51 @@ final class SessionFocusTests: XCTestCase {
         state.browserFocusFinished(id: id, ok: true)
         XCTAssertFalse(state.navigationBusy)
         XCTAssertTrue(state.hudState.isCollapsed)
+    }
+
+    func testNativeNavigationReleasesTheHUDBeforeActivatingAnotherDesktop() throws {
+        let (state, _) = browserFixture()
+        state.openPanel()
+        var released = false
+        var opens = 0
+        state.dismissHandler = { released = true }
+        state.sessionOpener = { _, _, _, completion in
+            opens += 1
+            XCTAssertTrue(released, "return keyboard focus before activating a window on another display or Space")
+            XCTAssertTrue(state.hudState.isCollapsed, "a later HUD dismissal must not undo the app switch")
+            completion(nil)
+        }
+        state.openRecordedLocation(try XCTUnwrap(state.sessions.first))
+        XCTAssertEqual(opens, 1)
+        XCTAssertFalse(state.navigationBusy)
+        XCTAssertTrue(state.hudState.isCollapsed)
+    }
+
+    func testFailedNativeNavigationRestoresTheExplanationAfterReleasingFocus() throws {
+        let (state, _) = browserFixture()
+        state.openPanel()
+        var released = false
+        state.dismissHandler = { released = true }
+        state.sessionOpener = { _, _, _, completion in
+            XCTAssertTrue(released)
+            completion("The source window has closed.")
+        }
+        state.openRecordedLocation(try XCTUnwrap(state.sessions.first))
+        XCTAssertFalse(state.navigationBusy)
+        XCTAssertTrue(state.hudState.isOpen)
+        XCTAssertEqual(state.navigationMessage, "The source window has closed.")
+    }
+
+    func testBrowserNavigationReleasesTheHUDBeforeTheBridgeActivatesItsWindow() throws {
+        let (state, queue) = browserFixture()
+        state.openPanel()
+        var released = false
+        state.dismissHandler = { released = true }
+        state.focusSession(try XCTUnwrap(state.sessions.first))
+        XCTAssertEqual(queue.pop(for: workspace).count, 1)
+        XCTAssertTrue(released)
+        XCTAssertTrue(state.hudState.isCollapsed)
+        XCTAssertTrue(state.navigationBusy, "the command must still wait for its acknowledgment")
     }
 
     func testFailedBrowserNavigationKeepsAnExplicitLinkFallback() throws {

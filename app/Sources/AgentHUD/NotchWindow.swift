@@ -20,6 +20,8 @@ final class NotchPanel: NSPanel {
         isOpaque = false
         hasShadow = false
         isMovable = false
+        becomesKeyOnlyIfNeeded = true
+        animationBehavior = .none  // the SwiftUI content owns all HUD animation
         acceptsMouseMovedEvents = true
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
@@ -27,6 +29,15 @@ final class NotchPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    func releaseKeyboardFocus() {
+        guard isKeyWindow else { return }
+        // resignKey() is an AppKit notification, not a focus-transfer API.
+        // Normal window ordering also releases a non-activating panel's
+        // WindowServer focus claim. Re-show the peripheral without making it key.
+        orderOut(nil)
+        orderFrontRegardless()
+    }
 }
 
 /// Where the HUD lives. The notch when a screen has one; otherwise a side
@@ -89,7 +100,10 @@ final class NotchWindowController {
         panel.contentView = hosting
         panel.ignoresMouseEvents = true
         state.frameUpdater = { _ in }  // sizes are view-driven now
-        state.dismissHandler = { [weak self] in self?.suppressHoverUntilExit() }
+        state.dismissHandler = { [weak self] in
+            self?.suppressHoverUntilExit()
+            self?.panel.releaseKeyboardFocus()
+        }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.screensChanged() }
@@ -102,7 +116,7 @@ final class NotchWindowController {
         state.$edgeAnchor.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.fixFrame() }.store(in: &subscriptions)
         state.$hudState.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] target in
             // A dismissed peripheral must give keyboard focus back too.
-            if target.isCollapsed, self?.panel.isKeyWindow == true { self?.panel.resignKey() }
+            if target.isCollapsed { self?.panel.releaseKeyboardFocus() }
         }.store(in: &subscriptions)
         fixFrame()
         panel.orderFrontRegardless()

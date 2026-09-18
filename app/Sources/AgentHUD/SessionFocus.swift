@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import Network
 
 /// Navigation metadata, never executable commands supplied by an adapter.
@@ -105,12 +106,6 @@ struct SessionFocus: Equatable, Sendable {
             !application.isEmpty || (local && app == "cursor" && !cwd.isEmpty)
     }
 
-    var cmuxURL: URL? {
-        guard !workspace.isEmpty else { return nil }
-        let path = "cmux://workspace/" + workspace + (surface.isEmpty ? "" : "/surface/" + surface)
-        return URL(string: path)
-    }
-
     @MainActor
     func open(app: String, local: Bool, completion: @escaping @MainActor (String?) -> Void) {
         if !warpURL.isEmpty, let u = URL(string: warpURL) {
@@ -125,10 +120,21 @@ struct SessionFocus: Equatable, Sendable {
             } else { completion(NSWorkspace.shared.open(u) ? nil : "The conversation could not be opened.") }
             return
         }
-        // The public navigation link works from a standalone menu-bar app.
-        // Its private control socket correctly rejects non-cmux processes.
-        if let target = cmuxURL {
-            completion(NSWorkspace.shared.open(target) ? nil : "cmux could not open this session.")
+        // cmux's URL handler can bounce out of a full-screen Space on a
+        // second display. Its scripting API selects the same existing pane
+        // and acknowledges the selection, without that URL-open handoff.
+        if !workspace.isEmpty {
+            guard let cmux = NSRunningApplication.runningApplications(withBundleIdentifier: "com.cmuxterm.app").first else {
+                completion("cmux is not running. Open it and try this session again.")
+                return
+            }
+            let pid = cmux.processIdentifier
+            DispatchQueue.global(qos: .userInitiated).async {
+                let error = Self.openCmux(workspace: workspace, surface: surface, pid: pid)
+                DispatchQueue.main.async {
+                    completion(error)
+                }
+            }
             return
         }
         if !sshConnection.isEmpty {
@@ -175,6 +181,22 @@ struct SessionFocus: Equatable, Sendable {
         completion("This session has no linked terminal or browser window yet.")
     }
 
+    private static func openCmux(workspace: String, surface: String, pid: pid_t) -> String? {
+        let target = NSAppleEventDescriptor(processIdentifier: pid)
+        guard var address = target.aeDesc?.pointee else { return "cmux could not be reached." }
+        // Only a user's Go to session click reaches this request. Checking
+        // first gives a denied grant a specific explanation, not a stale-pane
+        // error. The OS does not prompt again after a denial.
+        let permission = AEDeterminePermissionToAutomateTarget(&address,
+            0x436d7578, 0x46637573, true) // cmux's documented Cmux/Fcus event
+        if permission == errAEEventNotPermitted || permission == errAEEventWouldRequireUserConsent {
+            return "Allow Agent HUD to control cmux in System Settings → Privacy & Security → Automation, then try again. This is separate from Accessibility."
+        }
+        guard permission == noErr else { return "macOS could not reach cmux. Try this session again." }
+        return run("/usr/bin/osascript", arguments: ["-e", cmuxScript, workspace, surface])
+            ? nil : "This cmux workspace or terminal could not be selected. It may have closed."
+    }
+
     private static func resolveSSH(helper: String, connection: String) -> [String: Any] {
         let process = Process(); process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["python3", helper, "--resolve", connection]
@@ -201,6 +223,35 @@ struct SessionFocus: Equatable, Sendable {
 
     // Arguments stay data. Never interpolate a path, identifier, or command
     // received from a hook into AppleScript source.
+    private static let cmuxScript = """
+    on run argv
+        set wantedWorkspace to item 1 of argv
+        set wantedSurface to item 2 of argv
+        if application id "com.cmuxterm.app" is not running then error "cmux is not running"
+        tell application id "com.cmuxterm.app"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    if id of t is wantedWorkspace then
+                        if wantedSurface is "" then
+                            select tab t
+                            activate window w
+                            return
+                        end if
+                        repeat with s in terminals of t
+                            if id of s is wantedSurface then
+                                focus s
+                                return
+                            end if
+                        end repeat
+                        error "Terminal not found in this workspace"
+                    end if
+                end repeat
+            end repeat
+        end tell
+        error "Workspace not found"
+    end run
+    """
+
     private static let terminalScript = """
     on run argv
         set wantedTTY to item 1 of argv

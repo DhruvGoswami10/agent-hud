@@ -29,10 +29,10 @@ location to return to the work.
 
 <p align="center"><img src="assets/notch.gif" alt="Agent activity beside the MacBook notch" width="760"></p>
 
-**Version 0.3.1** links remote Claude sessions back to their originating SSH
-pane and uses **Go to session** throughout the panel. Notification popups no
-longer show an ×; click the popup to dismiss it. It includes the responsive
-hover and notification fixes from earlier releases. See [CHANGELOG.md](CHANGELOG.md)
+**Version 0.3.2** fixes the **Go to session** focus handoff for full-screen apps
+and separate displays. It includes remote Claude-to-SSH-pane linking from
+0.3.1 and the responsive hover fixes. Notification popups have no ×; click
+the popup to dismiss it. See [CHANGELOG.md](CHANGELOG.md)
 and the [audit resolution notes](docs/reliability-release.md).
 
 ## Install
@@ -131,7 +131,7 @@ leaving the pointer still keeps the popup dismissed.
 
 | Source | Where the session button takes you |
 | --- | --- |
-| cmux | Recorded workspace and pane through cmux's native navigation link, including a linked local pane hosting SSH |
+| cmux | Recorded workspace and terminal through cmux's native scripting interface, including a linked local pane hosting SSH; macOS Automation access is requested on the first click |
 | Warp | Original pane via `WARP_FOCUS_URL` on supported Warp versions |
 | Terminal / iTerm2 | Recorded local tab or pane; macOS Automation access may be requested on the first click |
 | ChatGPT / Claude web | Existing conversation tab and window through the paired 0.3.0 bridge; a closed tab reopens its conversation link |
@@ -146,6 +146,12 @@ SSH hook links that connection to its original terminal; see
 [SSH session navigation](docs/remote-setup.md#return-to-the-original-ssh-pane).
 An unavailable browser bridge falls back to the conversation link; a failed
 command keeps an explicit link button visible.
+
+cmux navigation needs **Agent HUD → cmux** under macOS **Privacy & Security →
+Automation**. This is separate from Accessibility. Version 0.3.2 uses this
+interface because cmux's navigation URL could switch away from its full-screen
+desktop on an external monitor. The HUD releases focus before selecting the
+destination, and a closed pane reports an error instead of opening another one.
 
 Hook locations survive reporter refreshes and app restarts. They are kept in
 private `session-focus/` files under the Mac's AgentHUD Application Support

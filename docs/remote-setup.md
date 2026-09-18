@@ -80,8 +80,12 @@ python3 bin/hud_ssh_focus.py --capture-all
 
 The updated reporter can recover an existing Claude process's SSH identity on
 Linux; the Claude session does not need to restart. cmux navigation uses its
-public `cmux://workspace/…/surface/…` link and works with the default restricted
-control socket. The initial capture runs within an authorized cmux terminal.
+native scripting interface to select the existing workspace and terminal.
+macOS asks for **Agent HUD → cmux** Automation access when first used. This
+does not require Accessibility or changes to cmux's restricted control socket.
+The initial capture runs within an authorized cmux terminal. Navigation URLs
+used in 0.3.1 could switch away from cmux's full-screen desktop on a second
+display; 0.3.2 avoids that URL-opening path.
 
 Navigation requires that the original SSH connection remain open. Shared
 ControlMaster connections, Unix-socket forwarding (including agent forwarding),

@@ -403,6 +403,9 @@ final class AppState: ObservableObject {
     @Published private(set) var navigationBusy = false
     @Published private(set) var navigationLinkFallback = false
     var browserCommands: CommandQueue?
+    var sessionOpener: (SessionFocus, String, Bool, @escaping @MainActor (String?) -> Void) -> Void = {
+        focus, app, local, completion in focus.open(app: app, local: local, completion: completion)
+    }
     private var navigationRequest: String?
     private var navigationTask: Task<Void, Never>?
 
@@ -413,6 +416,7 @@ final class AppState: ObservableObject {
         navigationMessage = ""
         navigationBusy = true
         navigationLinkFallback = false
+        selectedSessionId = session.id
         let focus = session.focus
         let id = UUID().uuidString
         if focus.hasBrowserTab, browserCommands?.isConnected(focus.browserClient) == true,
@@ -420,6 +424,7 @@ final class AppState: ObservableObject {
                 "url": focus.url, "expires": Date().addingTimeInterval(5).timeIntervalSince1970 * 1000]) {
             navigationRequest = id
             navigationMessage = "Opening conversation…"
+            dismissNow()
             browserCommands?.push(String(decoding: data, as: UTF8.self), tab: focus.browserClient)
             navigationTask = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
@@ -438,17 +443,24 @@ final class AppState: ObservableObject {
         navigationBusy = false
         navigationLinkFallback = !ok
         navigationMessage = ok ? "" : "The browser did not open this session. Try its conversation link."
-        if ok { dismissNow() }
+        if !ok { openPanel() }
     }
 
     func openRecordedLocation(_ session: SessionInfo) {
         navigationBusy = true
         navigationMessage = ""
         navigationLinkFallback = false
-        session.focus.open(app: session.app, local: Host.isLocal(session.host)) { [weak self] error in
+        selectedSessionId = session.id
+        // Finish the non-activating panel's keyboard-focus handoff before
+        // opening the destination. A later collapse must not interleave with
+        // the other app's window/Space activation.
+        dismissNow()
+        sessionOpener(session.focus, session.app, Host.isLocal(session.host)) { [weak self] error in
             self?.navigationBusy = false
-            if let error { self?.navigationMessage = error }
-            else { self?.dismissNow() }
+            if let error {
+                self?.navigationMessage = error
+                self?.openPanel()
+            }
         }
     }
 
