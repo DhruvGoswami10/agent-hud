@@ -35,6 +35,7 @@ real hardware or a longer observation period. It is not a claim of zero bugs.
 ## Validation
 
 - 194 Swift tests, 52 Python tests, and 14 browser checks passed locally.
+  The Python suite also passes on 3.14 with strict X.509 validation enabled.
 - Universal arm64/x86_64 Mac build targets macOS 14; Safari wrapper and Watch
   simulator Release builds passed. The Xcode 27 SDK emits an Intel architecture
   deprecation notice; Swift source compilation passes with warnings as errors.

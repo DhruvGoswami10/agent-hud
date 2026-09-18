@@ -174,6 +174,7 @@ class WatchRelayTests(unittest.TestCase):
             try:
                 # Trust this fixture's certificate only; no global trust bypass.
                 context = ssl.create_default_context(cafile=str(Path(tmp) / "watch-cert.pem"))
+                context.verify_flags |= ssl.VERIFY_X509_STRICT
                 context.check_hostname = False  # identity is pinned by the Watch client
                 base = "https://127.0.0.1:%d" % server.server_port
                 for endpoint, token, status in [("/watch", "wrong", 401), ("/debug", pair["token"], 404),
@@ -182,6 +183,7 @@ class WatchRelayTests(unittest.TestCase):
                     with self.assertRaises(urllib.error.HTTPError) as error:
                         urllib.request.urlopen(req, context=context, timeout=3)
                     self.assertEqual(error.exception.code, status)
+                    error.exception.close()
             finally:
                 server.shutdown()
                 server.server_close()
