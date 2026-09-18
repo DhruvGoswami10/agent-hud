@@ -9,7 +9,12 @@ swift build --package-path app -c release --arch arm64 --arch x86_64 -Xswiftc -w
 # SwiftPM's output path differs between toolchains; ask it, do not assume it.
 BIN_PATH="$(swift build --package-path app -c release --arch arm64 --arch x86_64 --show-bin-path)"
 make bundle VERSION="$VERSION" BIN="$BIN_PATH/AgentHUD" SWIFT_FLAGS="--arch arm64 --arch x86_64 -Xswiftc -warnings-as-errors"
-lipo dist/AgentHUD.app/Contents/MacOS/AgentHUD -verify_arch arm64 x86_64
+python3 - <<'PY'
+import subprocess
+architectures = subprocess.check_output(['/usr/bin/lipo', '-archs', 'dist/AgentHUD.app/Contents/MacOS/AgentHUD'], text=True).split()
+if set(architectures) != {'arm64', 'x86_64'}:
+    raise SystemExit('Expected a universal Mac binary; got ' + repr(architectures))
+PY
 xcodebuild -project 'safari/Agent HUD Bridge/Agent HUD Bridge.xcodeproj' -scheme 'Agent HUD Bridge' -configuration Release -derivedDataPath safari/build CODE_SIGNING_ALLOWED=NO build
 SAFARI='safari/build/Build/Products/Release/Agent HUD Bridge.app'
 codesign --force --sign - "$SAFARI/Contents/PlugIns/Agent HUD Bridge Extension.appex"
@@ -17,6 +22,8 @@ codesign --force --sign - "$SAFARI"
 make watch
 mkdir -p dist/release
 # ditto preserves app symlinks, modes and signatures. Never include host config.
+rm -f dist/release/AgentHUD.app.zip dist/release/AgentHUD-Safari-Bridge.app.zip \
+  dist/release/agent-hud-chrome-extension.zip dist/release/AgentHUDWatch-Simulator.app.zip
 ditto -c -k --sequesterRsrc --keepParent dist/AgentHUD.app dist/release/AgentHUD.app.zip
 ditto -c -k --sequesterRsrc --keepParent "$SAFARI" dist/release/AgentHUD-Safari-Bridge.app.zip
 (cd extension && zip -q -r ../dist/release/agent-hud-chrome-extension.zip . -x '*.DS_Store')

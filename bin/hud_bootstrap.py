@@ -17,6 +17,9 @@ FILES = ('agent-hud-send', 'agent-hud-payload.py', 'agent-hud-registry',
          'install-hooks.py', 'hud_config.py', 'agent-hud-codex', 'agent-hud-cursor')
 OPTIONS = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'PermitLocalCommand=no',
            '-o', 'ClearAllForwardings=yes']
+# The upload manifest contains the filename too. Match an executable path,
+# never that JSON argument on the updater's own command line.
+REPORTER_PATTERN = r'(^|/)agent-hud-registry([[:space:]]|$)'
 
 
 def config_dir():
@@ -49,7 +52,8 @@ def main():
                                    if p.strip() and not p.lstrip().startswith('#')):
         raise SystemExit('Host is not listed in hosts.conf')
     version = digest()
-    probe = ssh(host, 'cat "$HOME/agent-hud/.reporter-sha256" 2>/dev/null; pgrep -u "$(id -u)" -f "[a]gent-hud-registry" >/dev/null')
+    import shlex
+    probe = ssh(host, 'cat "$HOME/agent-hud/.reporter-sha256" 2>/dev/null; pgrep -u "$(id -u)" -f ' + shlex.quote(REPORTER_PATTERN) + ' >/dev/null')
     if probe.returncode == 0 and probe.stdout.strip() == version:
         print(host + ': reporter already current')
         return
@@ -62,7 +66,7 @@ def main():
         raise SystemExit(host + ': upload failed; existing reporter left running')
     # stdin script keeps process-control text out of the remote shell's argv.
     # Verify all bytes before atomically replacing any active script.
-    update = '''import hashlib, json, os, pathlib, shutil, subprocess, sys, tempfile
+    update = 'REPORTER_PATTERN = ' + repr(REPORTER_PATTERN) + '\n' + '''import hashlib, json, os, pathlib, shutil, subprocess, sys, time
 root = pathlib.Path.home() / 'agent-hud'
 version = sys.argv[1]
 files = json.loads(sys.argv[2])
@@ -81,14 +85,16 @@ for name in files:
     os.replace(tmp, bin / name)
 subprocess.run([sys.executable, str(bin / 'install-hooks.py'), str(bin / 'agent-hud-send')], check=True)
 # Only same-user HUD reporters are restarted; agent sessions are untouched.
-subprocess.run(['pkill', '-u', str(os.getuid()), '-f', '[a]gent-hud-registry'], check=False)
+subprocess.run(['pkill', '-u', str(os.getuid()), '-f', REPORTER_PATTERN], check=False)
 log = open(root / 'reporter.log', 'wb')
 p = subprocess.Popen([sys.executable, str(bin / 'agent-hud-registry')], stdin=subprocess.DEVNULL,
                      stdout=subprocess.DEVNULL, stderr=log, start_new_session=True)
+time.sleep(0.25)
+if p.poll() is not None:
+    raise SystemExit('Reporter exited during startup; see reporter.log')
 (root / '.reporter-sha256').write_text(version)
 print('reporter updated; pid ' + str(p.pid))
 '''
-    import shlex
     result = ssh(host, 'python3 - ' + shlex.quote(version) + ' ' + shlex.quote(json.dumps(FILES)), input=update)
     if result.returncode:
         raise SystemExit(host + ': update failed: ' + result.stderr[-1000:])

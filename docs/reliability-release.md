@@ -34,7 +34,7 @@ real hardware or a longer observation period. It is not a claim of zero bugs.
 
 ## Validation
 
-- 194 Swift tests, 51 Python tests, and 14 browser checks passed locally.
+- 194 Swift tests, 52 Python tests, and 14 browser checks passed locally.
 - Universal arm64/x86_64 Mac build targets macOS 14; Safari wrapper and Watch
   simulator Release builds passed. The Xcode 27 SDK emits an Intel architecture
   deprecation notice; Swift source compilation passes with warnings as errors.
@@ -43,7 +43,7 @@ real hardware or a longer observation period. It is not a claim of zero bugs.
   samples were below 1% of one core. This is a short check, not a controlled
   benchmark against the previous release or a multi-day leak result.
 - The simulator exercised the Watch's actual pinned TLS client against the
-  Python relay. It does not establish physical-device installation, network
+  Python relay, including rejection of a deliberately incorrect certificate pin. It does not establish physical-device installation, network
   permissions, or watchOS background delivery. Polling is foreground-only.
 
 ## Upgrade notes and remaining manual checks

@@ -22,6 +22,14 @@ def script(name):
 
 
 class AdapterTests(unittest.TestCase):
+    def test_remote_restart_filter_excludes_the_updater_manifest(self):
+        import re
+        m = script("hud_bootstrap.py")
+        pattern = m.REPORTER_PATTERN.replace("[[:space:]]", r"\s")
+        self.assertRegex("python3 /home/dev/agent-hud/bin/agent-hud-registry", pattern)
+        self.assertIsNone(re.search(pattern, "python3 - checksum " + json.dumps(m.FILES)))
+        self.assertIsNone(re.search(pattern, "python3 /home/dev/agent-hud/bin/agent-hud-registry-backup"))
+
     def test_codex_completion_uses_thread_identity(self):
         m = script("agent-hud-codex")
         data = {"type": "agent-turn-complete", "thread-id": "thread", "turn-id": "turn"}
