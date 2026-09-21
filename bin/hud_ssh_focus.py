@@ -2,8 +2,9 @@
 
 Capture runs from the existing SSH LocalCommand / bootstrap integration.
 Navigation reads the saved link and verifies that the same SSH process and
-connection are still alive. cmux control remains restricted to its terminals;
-the HUD opens its public navigation URL instead of opening its control socket.
+connection are still alive. A reconnect can reuse the same recorded cmux pane
+only after validating its replacement SSH connection. The HUD selects cmux's
+pane through its scripting interface; its control socket stays restricted.
 """
 import hashlib
 import json
@@ -149,27 +150,75 @@ def capture_sources(all_terminals=False):
         return 0  # navigation capture must never break SSH or bootstrap
 
 
-def resolve(connection):
-    connection = ssh_connection(connection)
-    if not connection:
-        return {"error": "This session did not report a valid SSH connection."}
-    candidates = [row for row in connections() if row["connection"] == connection]
-    if len(candidates) != 1:
-        return {"error": "This session's SSH connection is no longer open on this Mac."}
-    row = candidates[0]
-    if not dedicated_connection(row["pid"]):
-        return {"error": "This SSH connection is shared or forwarded, so its terminal tab cannot be identified safely."}
+def read_link(connection):
     try:
         path = link_path(connection)
         if path.stat().st_size > 8192:
             raise ValueError("oversized link")
         link = json.loads(path.read_text())
-        if (link.get("pid") == row["pid"] and link.get("connection") == connection and
-                link.get("started") and link["started"] == process_start(row["pid"]) and
-                link.get("tty") == process_tty(row["pid"]) and isinstance(link.get("focus"), dict)):
-            return {"focus": link["focus"]}
-    except (OSError, ValueError, AttributeError):
+        if (isinstance(link, dict) and link.get("connection") == connection
+                and isinstance(link.get("focus"), dict)):
+            return link
+    except (OSError, ValueError):
         pass
+    return {}
+
+
+def matches_process(row, link):
+    return (link.get("pid") == row["pid"] and link.get("connection") == row["connection"]
+            and bool(link.get("started")) and link["started"] == process_start(row["pid"])
+            and bool(link.get("tty")) and link["tty"] == process_tty(row["pid"]))
+
+
+def cmux_destination(link):
+    focus = link.get("focus", {})
+    workspace, surface = valid_uuid(focus.get("workspace")), valid_uuid(focus.get("surface"))
+    if focus.get("application") == "com.cmuxterm.app" and workspace and surface:
+        return {"application": "com.cmuxterm.app", "workspace": workspace, "surface": surface}
+    return None
+
+
+def resolve_reconnected(connection, live):
+    # A background Claude can keep reporting the connection it started under.
+    # Preserve its original pane identity across reconnects, never infer a pane
+    # merely because it connects to the same host. Both links must name the
+    # exact same workspace AND surface, and the new process must still match.
+    wanted = cmux_destination(read_link(connection))
+    if not wanted:
+        return {"error": "This session's SSH connection is no longer open on this Mac."}
+    destination = connection.split()[2:]
+    candidates = []
+    for row in live:
+        if row["connection"].split()[2:] != destination:
+            continue
+        link = read_link(row["connection"])
+        if link.get("pid") == row["pid"] and cmux_destination(link) == wanted:
+            candidates.append((row, link))
+            if len(candidates) > 1:
+                return {"error": "More than one SSH connection is using this cmux pane. Agent HUD cannot choose between them."}
+    if len(candidates) == 1:
+        row, link = candidates[0]
+        if matches_process(row, link) and dedicated_connection(row["pid"]):
+            return {"focus": wanted, "reconnected": True}
+    return {"error": "This session's SSH connection has closed. Reconnect in its original cmux pane, then try again."}
+
+
+def resolve(connection):
+    connection = ssh_connection(connection)
+    if not connection:
+        return {"error": "This session did not report a valid SSH connection."}
+    live = connections()
+    candidates = [row for row in live if row["connection"] == connection]
+    if not candidates:
+        return resolve_reconnected(connection, live)
+    if len(candidates) != 1:
+        return {"error": "This session's SSH connection could not be identified uniquely."}
+    row = candidates[0]
+    if not dedicated_connection(row["pid"]):
+        return {"error": "This SSH connection is shared or forwarded, so its terminal tab cannot be identified safely."}
+    link = read_link(connection)
+    if matches_process(row, link):
+        return {"focus": link["focus"]}
     return {"error": "This SSH tab is not linked yet. Connect with the Agent HUD SSH hook to link this terminal."}
 
 

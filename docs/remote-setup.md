@@ -87,7 +87,16 @@ The initial capture runs within an authorized cmux terminal. Navigation URLs
 used in 0.3.1 could switch away from cmux's full-screen desktop on a second
 display; 0.3.2 avoids that URL-opening path.
 
-Navigation requires that the original SSH connection remain open. Shared
+After an SSH reconnect, a background Claude session may still report its old
+connection. Version 0.3.5 can recover the original cmux pane when both the old
+and new connections have saved links to the exact same workspace and surface,
+and exactly one live replacement connects to the same server address and port.
+The replacement's PID, process start time, TTY, and dedicated connection are
+revalidated. A changed Mac network address is allowed; another pane on the same
+server is never substituted. This returns to the recorded terminal; it does not
+run `claude attach` or select a different conversation inside Claude's agent view.
+
+Other terminal types still require the original connection to remain open. Shared
 ControlMaster connections, Unix-socket forwarding (including agent forwarding),
 and sessions inside tmux/screen are not attributed automatically because they
 can make the source pane ambiguous. Proxies or NAT that change the reported

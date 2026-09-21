@@ -29,8 +29,9 @@ location to return to the work.
 
 <p align="center"><img src="assets/notch.gif" alt="Agent activity beside the MacBook notch" width="760"></p>
 
-**Version 0.3.4** adds a brief **Copied!** confirmation when copying the browser
-pairing key, with no button movement. It includes clear **Off / Auto / Manual**
+**Version 0.3.5** restores **Go to session** after SSH reconnects in the original
+cmux pane, including background Claude sessions that still report an old connection.
+It includes a brief **Copied!** confirmation for the browser pairing key and clear **Off / Auto / Manual**
 Keep Awake controls, countdowns, and separate Mac/display status. Click the
 header badge to choose a mode; its controls stay in place as you switch.
 The **Go to session** fixes cover cmux, full-screen desktops, and separate displays.

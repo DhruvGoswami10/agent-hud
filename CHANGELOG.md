@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.5 — 2026-09-21
+
+- Recover **Go to session** after reconnecting SSH in the original cmux pane.
+  A background Claude session can keep reporting a closed connection; the old
+  lookup rejected it and briefly reopened the HUD with an error.
+- Match the saved workspace and surface to exactly one replacement SSH link
+  for the same server and port. Revalidate its process start time, terminal,
+  and dedicated connection before selecting the pane. Other panes on the same
+  server, shared connections, reused processes, and ambiguous matches stay rejected.
+- Keep cmux's existing native window handoff and display behavior. The fix is
+  in the Mac's bundled helper; existing remote reporters do not need an update.
+- Eight regression tests cover reconnects, network changes, and rejected matches.
+- Mac advances to 0.3.5. Reporter remains 0.3.1, browser/Safari 0.3.0,
+  Watch 0.2.0, and the event protocol remains version 2.
+
 ## 0.3.4 — 2026-09-21
 
 - Show a green checkmark and **Copied!** for two seconds after copying the
