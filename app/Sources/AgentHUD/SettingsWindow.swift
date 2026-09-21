@@ -59,7 +59,7 @@ struct SettingsView: View {
             Section("Browser bridge") {
                 Text("Copy your pairing key, then paste it into the Agent HUD Bridge extension’s popup. Each browser needs to be paired once.")
                     .font(.caption).foregroundStyle(.secondary)
-                Button("Copy pairing key") { state.copyBrowserPairingKey() }
+                PairingKeyCopyButton { state.copyBrowserPairingKey() }
             }
             Section("Apple Watch") {
                 Toggle("Allow Watch connections on this network", isOn: Binding(
@@ -288,5 +288,51 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+private struct PairingKeyCopyButton: View {
+    let copy: () -> Bool
+    @State private var feedback = Feedback.ready
+    @State private var copyAttempt = 0
+
+    private enum Feedback: String, CaseIterable {
+        case ready = "Copy pairing key"
+        case copied = "Copied!"
+        case failed = "Couldn’t copy"
+
+        var symbol: String {
+            switch self {
+            case .ready: "doc.on.doc"
+            case .copied: "checkmark.circle.fill"
+            case .failed: "exclamationmark.circle"
+            }
+        }
+    }
+
+    var body: some View {
+        Button {
+            feedback = copy() ? .copied : .failed
+            copyAttempt += 1
+        } label: {
+            // Reserve every label's size so confirmation never moves the button.
+            ZStack {
+                ForEach(Feedback.allCases, id: \.self) { item in
+                    Label(item.rawValue, systemImage: item.symbol)
+                        .opacity(item == feedback ? 1 : 0)
+                        .accessibilityHidden(item != feedback)
+                }
+            }
+            .foregroundStyle(feedback == .copied ? Color.green : Color.primary)
+        }
+        .accessibilityLabel(feedback.rawValue)
+        .help(feedback == .failed ? "Try copying the pairing key again." : "Copy your browser pairing key.")
+        .task(id: copyAttempt) {
+            guard feedback != .ready else { return }
+            do { try await Task.sleep(for: .seconds(2)) }
+            catch { return }
+            feedback = .ready
+        }
+        .onDisappear { feedback = .ready }
     }
 }

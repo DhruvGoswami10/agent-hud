@@ -29,10 +29,11 @@ location to return to the work.
 
 <p align="center"><img src="assets/notch.gif" alt="Agent activity beside the MacBook notch" width="760"></p>
 
-**Version 0.3.3** adds clear **Off / Auto / Manual** Keep Awake controls,
-countdowns, and separate Mac/display status. Click the header badge to choose
-a mode; its controls stay in place as you switch. It includes the **Go to
-session** fixes for cmux, full-screen desktops, and separate displays.
+**Version 0.3.4** adds a brief **Copied!** confirmation when copying the browser
+pairing key, with no button movement. It includes clear **Off / Auto / Manual**
+Keep Awake controls, countdowns, and separate Mac/display status. Click the
+header badge to choose a mode; its controls stay in place as you switch.
+The **Go to session** fixes cover cmux, full-screen desktops, and separate displays.
 Notification popups have no ×; click the popup to dismiss it. See [CHANGELOG.md](CHANGELOG.md)
 and the [audit resolution notes](docs/reliability-release.md).
 

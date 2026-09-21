@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.4 — 2026-09-21
+
+- Show a green checkmark and **Copied!** for two seconds after copying the
+  browser pairing key in Settings → Connections. Repeated clicks restart
+  the confirmation; the button keeps the same size throughout.
+- Confirm only a successful clipboard write, show **Couldn’t copy** on failure,
+  and keep the key marked as concealed for clipboard managers.
+- Mac advances to 0.3.4. Reporter remains 0.3.1, browser/Safari 0.3.0,
+  Watch 0.2.0, and the event protocol remains version 2.
+
 ## 0.3.3 — 2026-09-21
 
 - Replace the ambiguous awake toggle with a badge that shows the effect,

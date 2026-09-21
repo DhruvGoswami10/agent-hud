@@ -21,13 +21,15 @@ final class AppState: ObservableObject {
     @Published var reporterStatus = "starting"
     @Published var reporterProblem = ""
 
-    func copyBrowserPairingKey() {
+    func copyBrowserPairingKey() -> Bool {
         let token = SupportPaths.browserToken()
-        guard !token.isEmpty else { return }
+        guard !token.isEmpty else { return false }
+        let item = NSPasteboardItem()
+        guard item.setString(token, forType: .string),
+              item.setData(Data(), forType: .init("org.nspasteboard.ConcealedType")) else { return false }
         let pb = NSPasteboard.general
         pb.clearContents()
-        pb.setString(token, forType: .string)
-        pb.setData(Data(), forType: .init("org.nspasteboard.ConcealedType"))
+        return pb.writeObjects([item])
     }
 
     @Published var systemNotifications: Bool {
