@@ -666,7 +666,7 @@ private struct OpenPanel: View {
                     .foregroundStyle(EventKind.attention.color)
                     .help("Notifications muted — click the sparkle menu to unmute")
             }
-            awakeChip
+            AwakeBadge(state: state)
             Button { state.clearEvents() } label: {
                 Image(systemName: "trash").font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
             }
@@ -680,30 +680,6 @@ private struct OpenPanel: View {
             .help("Collapse")
             .accessibilityLabel("Collapse panel")
         }
-    }
-
-    /// Coffee-cup awake indicator: filled amber = Mac is being kept awake
-    /// (manual or auto-while-agents-work). Click toggles the manual hold.
-    private var awakeChip: some View {
-        HStack(spacing: 4) {
-            Image(systemName: state.awakeActive ? "cup.and.saucer.fill" : "cup.and.saucer")
-                .font(.system(size: 10))
-            Text(state.awakeActive ? "awake · \(state.awakeReason)" : "sleep ok")
-                .font(.system(size: 9, weight: .medium))
-        }
-        .foregroundStyle(state.awakeActive ? Color(red: 1, green: 0.76, blue: 0.35) : .white.opacity(0.4))
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(Capsule().fill(.white.opacity(state.awakeActive ? 0.1 : 0.05)))
-        .contentShape(Capsule())
-        .onTapGesture { if state.keepAwake { state.releaseAwakeHold() } else { state.holdAwake(minutes: 0) } }
-        .accessibilityLabel(state.awakeActive ? "Keep awake: " + state.awakeReason : "Allow sleep")
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { if state.keepAwake { state.releaseAwakeHold() } else { state.holdAwake(minutes: 0) } }
-        .help(state.keepAwake
-              ? "Screen stays on and unlocked (grant Accessibility for the no-lock part) — click to release. Lid closed on battery still sleeps: that's macOS, not us."
-              : (state.awakeActive ? "Auto-awake: \(state.awakeReason) — click to hold the screen on indefinitely"
-                                   : "Click to keep the screen on and unlocked indefinitely"))
     }
 
     private var scopeLine: String {

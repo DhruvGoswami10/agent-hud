@@ -114,8 +114,8 @@ final class AppState: ObservableObject {
     /// notch still opens the panel either way.
     @Published var hoverExpandsPeek: Bool { didSet { UserDefaults.standard.set(hoverExpandsPeek, forKey: "hoverExpandsPeek") } }
 
-    /// Manual hold keeps the screen lit (and defeats the lock). Off makes a
-    /// manual hold system-only — the Amphetamine "allow display sleep" case.
+    /// Manual display sleep prevention. Optional idle-lock prevention also
+    /// needs Accessibility; a power assertion alone does not disable locking.
     @Published var keepScreenOn: Bool {
         didSet {
             UserDefaults.standard.set(keepScreenOn, forKey: "keepScreenOn")
@@ -125,6 +125,9 @@ final class AppState: ObservableObject {
     /// When a manual hold should end. nil = indefinite (the old behaviour).
     @Published private(set) var keepAwakeUntil: Date? {
         didSet { UserDefaults.standard.set(keepAwakeUntil, forKey: "keepAwakeUntil") }
+    }
+    @Published private(set) var keepAwakeMinutes: Int? {
+        didSet { UserDefaults.standard.set(keepAwakeMinutes, forKey: "keepAwakeMinutes") }
     }
     @Published var autoUpdateCheck: Bool { didSet { UserDefaults.standard.set(autoUpdateCheck, forKey: "autoUpdateCheck") } }
 
@@ -158,14 +161,45 @@ final class AppState: ObservableObject {
     func refreshLoginItem() { openAtLogin = LoginItem.isEnabled }
 
     /// Start (or extend) the manual hold. `minutes == 0` means indefinite.
-    func holdAwake(minutes: Int) {
-        keepAwakeUntil = minutes > 0 ? Date().addingTimeInterval(Double(minutes) * 60) : nil
+    func holdAwake(minutes: Int, now: Date = Date()) {
+        keepAwakeMinutes = max(0, minutes)
+        keepAwakeUntil = minutes > 0 ? now.addingTimeInterval(Double(minutes) * 60) : nil
         keepAwake = true
     }
 
     func releaseAwakeHold() {
+        keepAwakeMinutes = nil
         keepAwakeUntil = nil
         keepAwake = false
+    }
+
+    var awakeMode: AwakeMode { keepAwake ? .manual : autoAwake ? .auto : .off }
+
+    func selectAwakeMode(_ mode: AwakeMode) {
+        guard mode != awakeMode else { return }
+        switch mode {
+        case .off:
+            autoAwake = false
+            releaseAwakeHold()
+        case .auto:
+            autoAwake = true
+            releaseAwakeHold()
+        case .manual:
+            holdAwake(minutes: 0)
+        }
+    }
+
+    func awakeStatus(at now: Date = Date()) -> AwakeStatus {
+        let age = lastBusyAt.map { now.timeIntervalSince($0) }
+        let requested = Self.desiredHold(keepAwake: keepAwake, autoAwake: autoAwake,
+                                         running: runningCount, attention: attentionCount,
+                                         lastBusyAge: age, keepScreenOn: keepScreenOn)
+        return AwakeStatus(mode: awakeMode, requested: requested,
+                           assertionAlive: Caffeine.shared.mode == requested && Caffeine.shared.assertionAlive,
+                           remaining: keepAwake ? keepAwakeUntil.map { max(0, $0.timeIntervalSince(now)) } : nil,
+                           running: runningCount, attention: attentionCount,
+                           graceRemaining: age.map { max(0, Self.autoLinger - $0) } ?? 0,
+                           idleResetAllowed: Caffeine.shared.jiggleAuthorized)
     }
 
     /// Whether a timed manual hold has run out. An indefinite hold (nil
@@ -382,7 +416,10 @@ final class AppState: ObservableObject {
             "muted": muted, "banners": systemNotifications, "sounds": sounds,
             "awake": ["reason": awakeReason, "active": awakeActive,
                       "assertionAlive": Caffeine.shared.assertionAlive,
-                      "jiggleAuthorized": Caffeine.shared.jiggleAuthorized],
+                      "jiggleAuthorized": Caffeine.shared.jiggleAuthorized,
+                      "mode": awakeMode.rawValue, "keepScreenOn": keepScreenOn,
+                      "remainingSeconds": awakeRemaining ?? -1,
+                      "controlsPresented": awakeControlsPresented],
             "hostLastReport": hostLastReport.mapValues { "\(Int(Date().timeIntervalSince($0)))s ago" },
             "health": healthDump(),
             "music": [
@@ -476,6 +513,12 @@ final class AppState: ObservableObject {
     private var collapseTask: Task<Void, Never>?
     private var hoverTask: Task<Void, Never>?
     private(set) var hovering = false
+    @Published var awakeControlsPresented = false {
+        didSet {
+            if awakeControlsPresented { collapseTask?.cancel() }
+            else if hudState.isOpen && !hovering { scheduleCollapse(after: hoverCollapseDelay) }
+        }
+    }
 
     init() {
         let d = UserDefaults.standard
@@ -490,6 +533,9 @@ final class AppState: ObservableObject {
         let expired = Self.holdExpired(keepAwake: savedHold, until: deadline, now: Date())
         keepAwake = savedHold && !expired
         keepAwakeUntil = expired || !savedHold ? nil : deadline
+        keepAwakeMinutes = savedHold && !expired
+            ? (deadline == nil ? 0 : (d.object(forKey: "keepAwakeMinutes") as? Int).flatMap { $0 > 0 ? $0 : nil })
+            : nil
         if expired {
             d.set(false, forKey: "keepAwake")
             d.removeObject(forKey: "keepAwakeUntil")
@@ -677,6 +723,7 @@ final class AppState: ObservableObject {
         // A timed hold ends itself — the whole point of asking for 30 minutes
         // rather than "on".
         if Self.holdExpired(keepAwake: keepAwake, until: keepAwakeUntil, now: now) {
+            keepAwakeMinutes = nil
             keepAwakeUntil = nil
             keepAwake = false   // re-enters updateCaffeine via didSet
             return
@@ -1330,15 +1377,17 @@ final class AppState: ObservableObject {
 
     private func scheduleCollapse(after t: TimeInterval) {
         collapseTask?.cancel()
+        guard !awakeControlsPresented else { return }
         collapseTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(t * 1_000_000_000))
-            guard let self, !Task.isCancelled, !self.hovering else { return }
+            guard let self, !Task.isCancelled, !self.hovering, !self.awakeControlsPresented else { return }
             self.collapse()
         }
     }
 
     private func show(_ target: HUDState, autoCollapse: TimeInterval?) {
         if muted, case .peek = target { return }
+        if !target.isOpen { awakeControlsPresented = false }
         collapseTask?.cancel()
         withAnimation(target.isCollapsed ? animStyle.collapseAnimation : animStyle.animation) { hudState = target }
         if let t = autoCollapse { scheduleCollapse(after: t) }

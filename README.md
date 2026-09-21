@@ -29,10 +29,11 @@ location to return to the work.
 
 <p align="center"><img src="assets/notch.gif" alt="Agent activity beside the MacBook notch" width="760"></p>
 
-**Version 0.3.2** fixes the **Go to session** focus handoff for full-screen apps
-and separate displays. It includes remote Claude-to-SSH-pane linking from
-0.3.1 and the responsive hover fixes. Notification popups have no ×; click
-the popup to dismiss it. See [CHANGELOG.md](CHANGELOG.md)
+**Version 0.3.3** adds clear **Off / Auto / Manual** Keep Awake controls,
+countdowns, and separate Mac/display status. Click the header badge to choose
+a mode; its controls stay in place as you switch. It includes the **Go to
+session** fixes for cmux, full-screen desktops, and separate displays.
+Notification popups have no ×; click the popup to dismiss it. See [CHANGELOG.md](CHANGELOG.md)
 and the [audit resolution notes](docs/reliability-release.md).
 
 ## Install
@@ -112,11 +113,18 @@ Spotify, Apple Music, and YouTube can supply now-playing information. An activel
 playing native player wins over a paused one. Browser music commands go to the
 specific tab. Artwork changes include the source, artist, and URL.
 
-Timed manual keep-awake holds preserve their deadline across restarts. Automatic
-holds keep the system awake while agents work or wait for attention, followed
-by a short grace period. Keeping the display on and preventing idle lock are
-separate: the latter requires Accessibility permission. A closed lid on battery
-can still cause macOS to sleep.
+Click the Keep Awake badge for **Off**, **Auto**, or **Manual**, with the same
+controls in Settings. Off releases both manual and automatic holds. Auto keeps
+the Mac awake while agents work or need attention, then for 10 minutes afterward;
+when idle it shows **Ready** and allows sleep. Manual holds can keep the display
+on or allow it to sleep, and end at a chosen time or when stopped. Ending a
+manual hold returns to the previous Auto/Off setting, shown below its controls.
+
+Timers preserve their deadline and chosen duration across restarts. The badge
+shows the effect, mode, and time remaining; **Active** requires a live sleep
+assertion. Keeping the display on and preventing idle lock are separate: the
+latter requires Accessibility permission. Closing the lid, choosing Sleep, or
+a low battery can still cause macOS to sleep.
 
 ## Settings and navigation
 

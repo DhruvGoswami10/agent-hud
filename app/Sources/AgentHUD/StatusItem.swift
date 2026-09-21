@@ -40,8 +40,8 @@ final class StatusItemController: NSObject {
         edgeLeftItem = makeItem("Side Notch on Left Edge", #selector(toggleEdgeSide), "")
         musicItem = makeItem("Music Controls", #selector(toggleMusic), "")
         muteItem = makeItem("Mute All Alerts", #selector(toggleMute), "m")
-        awakeItem = makeItem("Keep Mac Awake", #selector(toggleAwake), "")
-        autoAwakeItem = makeItem("Auto-Awake While Agents Work", #selector(toggleAutoAwake), "")
+        awakeItem = makeItem("Manual Keep Awake", #selector(toggleAwake), "")
+        autoAwakeItem = makeItem("Auto While Agents Work", #selector(toggleAutoAwake), "")
         menu.addItem(notifItem)
         menu.addItem(soundItem)
         menu.addItem(copyItem)
@@ -52,6 +52,7 @@ final class StatusItemController: NSObject {
         menu.addItem(muteItem)
         menu.addItem(awakeItem)
         menu.addItem(autoAwakeItem)
+        menu.addItem(makeItem("Off — Allow Sleep", #selector(turnAwakeOff), ""))
 
         // Timed holds: "keep it up for the next half hour" is the thing you
         // actually want, and it ends itself if you forget.
@@ -65,9 +66,9 @@ final class StatusItemController: NSObject {
             holdItems.append(m)
         }
         holdMenu.addItem(.separator())
-        holdMenu.addItem(makeItem("Indefinitely", #selector(holdIndefinitely), ""))
-        holdMenu.addItem(makeItem("Release Hold", #selector(releaseHold), ""))
-        let holdRoot = NSMenuItem(title: "Keep Awake For…", action: nil, keyEquivalent: "")
+        holdMenu.addItem(makeItem("Until Stopped", #selector(holdIndefinitely), ""))
+        holdMenu.addItem(makeItem("End Hold", #selector(releaseHold), ""))
+        let holdRoot = NSMenuItem(title: "Manual Hold For…", action: nil, keyEquivalent: "")
         holdRoot.submenu = holdMenu
         menu.addItem(holdRoot)
 
@@ -144,9 +145,8 @@ final class StatusItemController: NSObject {
     private func refresh() {
         let agg = state.aggregate
         let awakeTitle: String = {
-            guard let left = state.awakeRemaining else { return "Keep Mac Awake" }
-            let m = Int(left / 60) + (Int(left) % 60 > 0 ? 1 : 0)
-            return "Keep Mac Awake — \(m)m left"
+            guard let left = state.awakeRemaining else { return "Manual Keep Awake" }
+            return "Manual Keep Awake — \(AwakeStatus.minutesLeft(left))"
         }()
         let updater = Updater.shared
         let updateTitle: String = updater.checking ? "Checking for Updates…"
@@ -172,6 +172,7 @@ final class StatusItemController: NSObject {
         muteItem?.state = state.muted ? .on : .off
         awakeItem?.state = state.keepAwake ? .on : .off
         autoAwakeItem?.state = state.autoAwake ? .on : .off
+        autoAwakeItem?.title = state.keepAwake ? "Return to Auto After Manual Hold" : "Auto While Agents Work"
         // Show the countdown where the hold was started, so a forgotten
         // timer is visible rather than a mystery.
         awakeItem?.title = awakeTitle
@@ -215,6 +216,7 @@ final class StatusItemController: NSObject {
     @objc private func toggleMute() { state.muted.toggle() }
     @objc private func toggleAwake() { if state.keepAwake { state.releaseAwakeHold() } else { state.holdAwake(minutes: 0) } }
     @objc private func toggleAutoAwake() { state.autoAwake.toggle() }
+    @objc private func turnAwakeOff() { state.selectAwakeMode(.off) }
 
     @objc private func pickAnim(_ sender: NSMenuItem) {
         if let raw = sender.representedObject as? String, let style = AnimStyle(rawValue: raw) {

@@ -220,65 +220,26 @@ struct SettingsView: View {
     // MARK: - Keep awake
 
     private var awakeTab: some View {
-        Form {
-            Section("Right now") {
-                HStack {
-                    Image(systemName: state.awakeActive ? "cup.and.saucer.fill" : "cup.and.saucer")
-                        .foregroundStyle(state.awakeActive ? .orange : .secondary)
-                    Text(awakeStatus).foregroundStyle(state.awakeActive ? .primary : .secondary)
-                    Spacer()
-                    if state.keepAwake {
-                        Button("Release") { state.releaseAwakeHold() }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                AwakeControls(state: state)
+                    .preferredColorScheme(.dark)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                if !Caffeine.shared.jiggleAuthorized {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Optional idle-lock prevention").font(.headline)
+                        Text("Keeping the display on works without Accessibility. Preventing automatic locking needs that permission.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("Allow idle-lock prevention…") {
+                            Caffeine.shared.requestIdleResetAccess()
+                            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+                        }
                     }
                 }
-            }
-            Section("Hold it awake") {
-                HStack(spacing: 8) {
-                    ForEach([15, 30, 60, 120], id: \.self) { m in
-                        Button(m < 60 ? "\(m)m" : "\(m / 60)h") { state.holdAwake(minutes: m) }
-                    }
-                    Button("Indefinitely") { state.holdAwake(minutes: 0) }
-                }
-                Toggle("Keep the screen on during a manual hold", isOn: $state.keepScreenOn)
-                Text(state.keepScreenOn
-                     ? "The display stays lit. Preventing idle lock also requires Accessibility permission."
-                     : "The Mac stays up but the screen is allowed to sleep.")
+                Text("Keep Awake prevents idle sleep. Closing the lid, choosing Sleep, or a low battery can still put the Mac to sleep.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            if !Caffeine.shared.jiggleAuthorized {
-                Section("Idle lock permission") {
-                    Text("Keeping the display on works. Resetting the idle timer requires Accessibility access.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Button("Allow idle-lock prevention…") {
-                        Caffeine.shared.requestIdleResetAccess()
-                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-                    }
-                }
-            }
-            Section("While agents work") {
-                Toggle("Stay awake automatically", isOn: $state.autoAwake)
-                Text("Holds the Mac up while any agent is running or waiting on you, and for \(Int(AppState.autoLinger / 60)) minutes after the last one goes quiet — so a burst overnight doesn't lose its SSH tunnels. The screen is allowed to sleep.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section {
-                Text("A closed lid on battery with no external display sleeps anyway — that is below the layer any app can reach.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    private var awakeStatus: String {
-        guard state.awakeActive else { return "Sleeping normally" }
-        if let left = state.awakeRemaining {
-            let m = Int(left / 60), s = Int(left) % 60
-            return m > 0 ? "Held awake — \(m)m \(s)s left" : "Held awake — \(s)s left"
-        }
-        switch state.awakeReason {
-        case "manual": return "Held awake — until you release it"
-        case "agents": return "Held awake — agents are working"
-        case "cooldown": return "Held awake — cooling down after a run"
-        default: return "Held awake"
+            .padding(20)
         }
     }
 

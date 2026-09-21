@@ -71,9 +71,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Keeps a timed keep-awake hold honest — it must expire on its own
         // within seconds of its deadline, not at the next 30s sweep.
-        awakeTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+        awakeTimer = Timer(timeInterval: 5, repeats: true) { _ in
             Task { @MainActor in state.updateCaffeine() }
         }
+        if let awakeTimer { RunLoop.main.add(awakeTimer, forMode: .common) }
         // Staged screenshots must never pick up the real pasteboard.
         if !Playground.noReporter {
             clipboardWatcher = ClipboardWatcher { item in state.clipboardChanged(item) }

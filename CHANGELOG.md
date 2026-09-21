@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.3 — 2026-09-21
+
+- Replace the ambiguous awake toggle with a badge that shows the effect,
+  mode, and remaining time. Clicking opens explicit **Off / Auto / Manual**
+  controls, shared with Settings.
+- Keep the badge, popover, and mode selector at stable sizes and positions
+  while switching modes. Moving into the popover keeps the HUD open;
+  closing or dismissing it restores normal hover behavior.
+- Show Mac and display sleep behavior separately, plus accurate idle-lock
+  status. Auto distinguishes working, attention, the 10-minute grace period,
+  and ready with sleep allowed. Failed assertions never claim **Active**.
+- Off releases manual and automatic holds. Ending a manual hold returns to
+  the previous Auto/Off setting; timers preserve their original deadline and
+  selected duration across restarts. Expiry keeps running during menu tracking.
+- Use consistent manual-hold wording in the menu bar and add an explicit
+  **Off — Allow Sleep** action.
+- Mac advances to 0.3.3. Reporter remains 0.3.1, browser/Safari 0.3.0,
+  Watch 0.2.0, and the event protocol remains version 2.
+
 ## 0.3.2 — 2026-09-18
 
 - Select cmux sessions through its native scripting interface. The previous
