@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+"""Compatibility shim for Claude sessions still holding the 0.4.0 hook config.
+
+Return no decision so Claude continues with its normal permission prompt.
+New hook installations remove this handler. Keep the executable available for
+existing sessions until they reload their settings.
+"""

@@ -13,7 +13,7 @@ BIN = Path(__file__).resolve().parent
 sys.path.insert(0, str(BIN))
 from hud_config import atomic_write
 
-FILES = ('agent-hud-send', 'agent-hud-payload.py', 'agent-hud-registry',
+FILES = ('agent-hud-send', 'agent-hud-payload.py', 'agent-hud-permission', 'agent-hud-registry',
          'install-hooks.py', 'hud_config.py', 'hud_focus.py', 'hud_ssh_focus.py', 'agent-hud-codex', 'agent-hud-cursor')
 OPTIONS = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'PermitLocalCommand=no',
            '-o', 'ClearAllForwardings=yes']

@@ -15,6 +15,14 @@ sys.path.insert(0, str(BIN))
 
 
 class ClassicHookRestoreTests(unittest.TestCase):
+    def test_cached_permission_hook_exits_without_answering_or_reporting_an_error(self):
+        result = subprocess.run([sys.executable, str(BIN / 'agent-hud-permission')],
+                                input=json.dumps({'hook_event_name': 'PermissionRequest',
+                                                  'tool_name': 'Bash', 'tool_input': {'command': 'demo'}}),
+                                text=True, capture_output=True, timeout=2, check=True)
+        self.assertEqual(result.stdout, '')
+        self.assertEqual(result.stderr, '')
+
     def test_upgrade_removes_only_owned_decision_hooks_and_is_idempotent(self):
         for arguments in ([], ['--notify-only']):
             with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as tmp:
