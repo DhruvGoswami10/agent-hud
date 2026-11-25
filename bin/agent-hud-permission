@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Offer one Claude permission request to the HUD; return only a user's reply.
+
+The response travels on this request's own SSH-forwarded HTTP connection.
+No saved allow rules, keystrokes, background command execution, or auto-approval.
+Closing the HUD, losing SSH, dismissing a card, and timeouts never mean allow.
+"""
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import sys
+import urllib.parse
+import urllib.request
+import uuid
+
+BIN = Path(__file__).resolve().parent
+sys.path.insert(0, str(BIN))
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def local_url(raw):
+    value = urllib.parse.urlsplit(raw)
+    if (value.scheme != 'http' or value.hostname not in ('127.0.0.1', 'localhost', '::1')
+            or value.username or value.password or value.query or value.fragment
+            or value.path not in ('', '/')):
+        raise ValueError('Permission replies require the local HUD or an SSH loopback tunnel')
+    return raw.rstrip('/')
+
+
+def request_json(opener, url, payload, timeout):
+    data = json.dumps(payload).encode()
+    request = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+    with opener.open(request, timeout=timeout) as response:
+        raw = response.read(65_537)
+        if len(raw) > 65_536:
+            raise ValueError('Oversized response')
+        return json.loads(raw)
+
+
+def hook_output(reply, request_id):
+    if not isinstance(reply, dict) or reply.get('request_id') != request_id:
+        return None
+    choice = reply.get('decision')
+    if choice not in ('allow', 'deny'):
+        return None
+    decision = {'behavior': choice}
+    if choice == 'deny':
+        decision['message'] = 'The user rejected this request in Agent HUD.'
+    return {'hookSpecificOutput': {'hookEventName': 'PermissionRequest', 'decision': decision}}
+
+
+def main():
+    raw = sys.stdin.read(1_000_001)
+    if len(raw) > 1_000_000:
+        return
+    data = json.loads(raw)
+    if (not isinstance(data, dict) or data.get('hook_event_name') != 'PermissionRequest'
+            or not isinstance(data.get('session_id'), str) or not data['session_id']
+            or not isinstance(data.get('tool_name'), str) or not data['tool_name']
+            or not isinstance(data.get('tool_input'), dict)
+            or data.get('tool_name') in ('AskUserQuestion', 'ExitPlanMode')):
+        return
+    url = local_url(os.environ.get('AGENT_HUD_URL', 'http://127.0.0.1:48085'))
+    loader = importlib.machinery.SourceFileLoader('hud_claude_payload', str(BIN / 'agent-hud-payload.py'))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    payload = importlib.util.module_from_spec(spec)
+    loader.exec_module(payload)
+    event = payload.build_event(data)
+    if not event:
+        return
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    request_id = str(uuid.uuid4())
+    request = dict(event, request_id=request_id, tool_name=data.get('tool_name'), tool_input=data.get('tool_input'))
+    try:
+        reply = request_json(opener, url + '/approval', request, timeout=125)
+        output = hook_output(reply, request_id)
+        if output:
+            print(json.dumps(output), flush=True)
+    except (OSError, ValueError):
+        # Old/unavailable HUDs leave Claude's ordinary permission flow intact.
+        # If they support ordinary alerts, retain a Go to session notice.
+        try:
+            request_json(opener, url + '/event', event, timeout=2)
+        except (OSError, ValueError):
+            pass
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (OSError, ValueError, TypeError, AttributeError, KeyboardInterrupt):
+        pass

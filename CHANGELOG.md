@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.4.0 — 2026-11-25
+
+- Show Claude permission requests with their actual tool parameters and explicit
+  **Approve once / Reject / Go to session** controls. Replies belong to one
+  waiting hook connection; dismissals, timeouts, disconnects, stale clicks, and
+  app shutdown never approve an action or save permission rules.
+- Show all supplied question options and plan details with **Go to session**.
+  Use immediate permission/question hooks and typed notification events instead
+  of relying only on delayed English notification text.
+- Queue other session alerts behind the active card. Keep its controls stable
+  while hovering and receiving music or clipboard updates. Card-body clicks
+  dismiss without answering; pending cards remain available from **requests**.
+- Add session navigation to ordinary HUD popups and actionable system banners.
+  Banners can review a request in the HUD; direct decisions stay in the HUD.
+- Detect hook disconnects, consume each reply once, reject browser approval
+  requests, and generate native action IDs that clients cannot reuse. Keep the
+  existing loopback/SSH trust boundary and normal Claude fallback after two minutes.
+- End local reporter processes when their owning HUD exits unexpectedly, fixing
+  the orphaned reporters found during the November check.
+- Mac and reporter advance to 0.4.0 (Mac build 12). Browser/Safari remain 0.3.0,
+  Watch remains 0.2.0, and the additive event protocol remains version 2.
+
 ## 0.3.5 — 2026-09-21
 
 - Recover **Go to session** after reconnecting SSH in the original cmux pane.

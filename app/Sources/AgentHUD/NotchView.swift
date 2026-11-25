@@ -73,9 +73,18 @@ struct NotchRootView: View {
                         CollapsedStrip(state: state, metrics: metrics)
                     }
                 case .peek(let content):
-                    PeekView(content: content, art: state.nowPlayingArt,
-                             artColor: state.nowPlayingArtColor.map(Color.init(nsColor:)),
-                             onDismiss: state.dismissNow)
+                    Group {
+                        if case .event(let event) = content, event.prompt != nil {
+                            DecisionNotificationView(state: state, event: event)
+                        } else {
+                            PeekView(content: content, art: state.nowPlayingArt,
+                                     artColor: state.nowPlayingArtColor.map(Color.init(nsColor:)),
+                                     onDismiss: {
+                                         if state.clickPeekDismisses { state.dismissNotification() }
+                                         else { state.openPanel() }
+                                     }, onGoToSession: state.focusEvent)
+                        }
+                    }
                         .padding(.top, metrics.notchHeight)
                         .padding(edgeInset)
                         .opacity(showContent ? 1 : 0)
@@ -99,9 +108,7 @@ struct NotchRootView: View {
         .onTapGesture {
             switch state.hudState {
             case .peek:
-                // A peek that lands mid-thought should go away on the first
-                // click, not grow into the whole panel.
-                if state.clickPeekDismisses { state.dismissNow() } else { state.openPanel() }
+                break // card-body dismissal is separate from its action buttons
             case .collapsed:
                 state.openPanel()
             case .open:
@@ -448,6 +455,7 @@ private struct PeekView: View {
     var art: NSImage?
     var artColor: Color?
     let onDismiss: () -> Void
+    let onGoToSession: (AgentEvent) -> Void
 
     /// Dynamic-Island-style ambient glow color for this peek.
     private var glow: Color {
@@ -459,6 +467,28 @@ private struct PeekView: View {
     }
 
     var body: some View {
+        HStack(spacing: 12) {
+            Button(action: onDismiss) {
+                peekContents
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if case .event(let event) = content, event.kind == .attention || event.kind == .done {
+                Button("Go to session") { onGoToSession(event) }
+                    .font(.system(size: 10, weight: .medium))
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        }
+        .accessibilityAction(named: Text("Dismiss notification"), onDismiss)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(glow.opacity(0.04))
+    }
+
+    private var peekContents: some View {
         HStack(spacing: 12) {
             switch content {
             case .event(let e):
@@ -521,9 +551,6 @@ private struct PeekView: View {
                 MusicSourceMark(app: np.app, size: 16)
             }
         }
-        .accessibilityAction(named: Text("Dismiss notification"), onDismiss)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(alignment: .leading) {
             Circle()
@@ -659,7 +686,13 @@ private struct OpenPanel: View {
             }
             Spacer()
             if state.runningCount > 0 { countChip(state.runningCount, "working", .running) }
-            if state.attentionCount > 0 { countChip(state.attentionCount, "needs you", .attention) }
+            if !state.decisionEvents.isEmpty {
+                Button { state.showDecision() } label: {
+                    countChip(state.decisionEvents.count, "requests", .attention)
+                }
+                .buttonStyle(.plain)
+                .help("Review pending requests, including dismissed cards")
+            } else if state.attentionCount > 0 { countChip(state.attentionCount, "needs you", .attention) }
             if state.muted {
                 Image(systemName: "bell.slash.fill")
                     .font(.system(size: 10))
@@ -1061,6 +1094,11 @@ private struct DetailPane: View {
                 }
                 if !s.message.isEmpty {
                     Text(s.message).font(.system(size: 10)).foregroundStyle(.white.opacity(0.5)).lineLimit(3)
+                }
+                if let request = state.decisionEvents.first(where: { $0.sourceKey == s.id }) {
+                    Button("Review request") { state.showDecision(request.prompt?.id) }
+                        .buttonStyle(.borderedProminent)
+                        .tint(EventKind.attention.color)
                 }
                 Button(s.focus.actionTitle) { state.focusSession(s) }
                     .buttonStyle(.bordered)

@@ -55,7 +55,7 @@ def owns(command, executable):
                             and Path(args[1]).name == executable))
 
 
-def json_hooks(path, forwarder, events, cursor=False, remove=False):
+def json_hooks(path, forwarder, events, cursor=False, remove=False, timeout=None, matchers=None):
     cfg = load_json(path)  # malformed data is never overwritten
     hooks = cfg.setdefault('hooks', {})
     if cursor and not remove:
@@ -87,8 +87,12 @@ def json_hooks(path, forwarder, events, cursor=False, remove=False):
         command = shlex.quote(str(Path(forwarder).resolve()))
         for ev in events:
             hook = {'command': command, 'timeout': 3 if name == 'agent-hud-codex' else 5}
+            if timeout is not None:
+                hook['timeout'] = timeout
             if not cursor:
                 hook = {'hooks': [dict(hook, type='command')]}
+                if matchers and ev in matchers:
+                    hook['matcher'] = matchers[ev]
             hooks.setdefault(ev, []).append(hook)
     # Keep original bytes (and do not make a backup) on semantic no-ops.
     original = load_json(path)

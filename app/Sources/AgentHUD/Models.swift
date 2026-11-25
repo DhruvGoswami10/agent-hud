@@ -184,6 +184,8 @@ struct AgentEvent: Identifiable {
     var focus: SessionFocus = SessionFocus()
     /// Optional stable delivery identity supplied by retrying integrations.
     var eventID: String = ""
+    var prompt: DecisionPrompt? = nil
+    var resolvedPromptID: String = ""
     let image: NSImage?
     let ts: Date
 
@@ -200,7 +202,7 @@ struct AgentEvent: Identifiable {
         AgentEvent(kind: kind, host: newHost, project: project, sessionId: sessionId,
                    sessionName: sessionName, message: message, hook: hook,
                    model: model, app: app, outcome: outcome, focus: focus,
-                   eventID: eventID, image: image, ts: ts)
+                   eventID: eventID, prompt: prompt, resolvedPromptID: resolvedPromptID, image: image, ts: ts)
     }
 
     static func from(json: [String: Any]) -> AgentEvent? {
@@ -226,6 +228,8 @@ struct AgentEvent: Identifiable {
             outcome: .from(json["outcome"] as? String, message: (json["message"] as? String) ?? ""),
             focus: SessionFocus(json: json["focus"] as? [String: Any] ?? [:], cwd: json["cwd"] as? String ?? ""),
             eventID: (json["event_id"] as? String) ?? "",
+            prompt: (json["prompt"] as? [String: Any]).flatMap(DecisionPrompt.init(json:)),
+            resolvedPromptID: (json["resolved_prompt_id"] as? String) ?? "",
             image: image,
             ts: Date()
         )

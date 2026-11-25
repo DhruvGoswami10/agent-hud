@@ -6,6 +6,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// Whether we're in a real .app at all — the one fact that can't change
     /// while running. Authorization itself is asked fresh at post time.
     private var bundled = false
+    var onAction: ((String, String, Bool) -> Void)?
 
     /// Last known authorization, cached purely so /debug and the settings
     /// window can tell you why no banner appeared. A dropped banner used to
@@ -64,6 +65,12 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         bundled = true
         let center = UNUserNotificationCenter.current()
         center.delegate = self
+        let go = UNNotificationAction(identifier: "go-session", title: "Go to session", options: [.foreground])
+        let review = UNNotificationAction(identifier: "review-request", title: "Review in HUD", options: [.foreground])
+        center.setNotificationCategories([
+            UNNotificationCategory(identifier: "agent-session", actions: [go], intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: "agent-decision", actions: [review, go], intentIdentifiers: [], options: [])
+        ])
         center.requestAuthorization(options: [.alert, .sound]) { [weak self] _, _ in
             self?.refreshStatus()
         }
@@ -76,6 +83,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         // touching it from the settings callback's queue was a data race.
         let title = event.kind == .attention ? "\(event.label) needs you" : "\(event.label) — \(event.outcome.label)"
         let body = event.message
+        let source = event.sourceKey
+        let promptID = event.prompt?.id ?? ""
         // Asked per post, not cached from the launch prompt: this app runs for
         // weeks, and a permission granted in System Settings afterwards used
         // to stay invisible until a relaunch — the menu toggle read as on
@@ -93,9 +102,32 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = body
-            let req = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+            content.categoryIdentifier = promptID.isEmpty ? "agent-session" : "agent-decision"
+            content.threadIdentifier = source
+            content.userInfo = ["sourceKey": source, "promptID": promptID]
+            let req = UNNotificationRequest(identifier: promptID.isEmpty ? UUID().uuidString : "decision." + promptID,
+                                            content: content, trigger: nil)
             center.add(req)
         }
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        defer { completionHandler() }
+        guard response.actionIdentifier != UNNotificationDismissActionIdentifier,
+              let source = response.notification.request.content.userInfo["sourceKey"] as? String else { return }
+        let prompt = response.notification.request.content.userInfo["promptID"] as? String ?? ""
+        let review = response.actionIdentifier == "review-request" ||
+            (response.actionIdentifier == UNNotificationDefaultActionIdentifier && !prompt.isEmpty)
+        onAction?(source, prompt, review)
+    }
+
+    func withdrawDecision(_ id: String) {
+        guard bundled else { return }
+        let center = UNUserNotificationCenter.current()
+        center.removeDeliveredNotifications(withIdentifiers: ["decision." + id])
+        center.removePendingNotificationRequests(withIdentifiers: ["decision." + id])
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,

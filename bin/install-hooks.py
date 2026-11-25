@@ -34,6 +34,7 @@ def install_codex(argv):
 
 def uninstall():
     json_hooks(Path.home() / '.claude/settings.json', BIN / 'agent-hud-send', (), remove=True)
+    json_hooks(Path.home() / '.claude/settings.json', BIN / 'agent-hud-permission', (), remove=True)
     json_hooks(Path.home() / '.cursor/hooks.json', BIN / 'agent-hud-cursor', (), cursor=True, remove=True)
     root = Path(os.environ.get('AGENT_HUD_CODEX_DIR', str(Path.home() / '.codex')))
     codex(root / 'config.toml', BIN / 'agent-hud-codex', remove=True)
@@ -48,9 +49,15 @@ def main():
     elif args[:1] == ['--uninstall']:
         uninstall()
     else:
+        notify_only = '--notify-only' in args
+        args = [arg for arg in args if arg != '--notify-only']
         forwarder = Path(args[0]) if args else BIN / 'agent-hud-send'
         path = args[1] if len(args) > 1 else Path.home() / '.claude/settings.json'
-        json_hooks(path, forwarder, ('UserPromptSubmit', 'Notification', 'Stop'))
+        questions = '^(AskUserQuestion|ExitPlanMode)$'
+        json_hooks(path, forwarder, ('UserPromptSubmit', 'Notification', 'Stop', 'PreToolUse', 'PostToolUse'),
+                   matchers={'PreToolUse': questions, 'PostToolUse': questions})
+        json_hooks(path, forwarder.parent / 'agent-hud-permission', ('PermissionRequest',),
+                   timeout=130, remove=notify_only)
         print('Claude hooks installed. Restart existing Claude sessions.', file=sys.stderr)
 
 

@@ -870,7 +870,7 @@ def payload():
     # Sessions first: the Codex scan is what picks up its rate-limit reading.
     codex = codex_snapshot()
     body = {"host": HOST, "sessions": snapshot() + codex, "usage": usage_windows(),
-            "providers": ["claude", "codex"], "protocol": 2, "reporter_version": "0.3.1"}
+            "providers": ["claude", "codex"], "protocol": 2, "reporter_version": "0.4.0"}
     lim = limits()
     if lim:
         body["limits"] = lim
@@ -898,7 +898,12 @@ def main():
         print(json.dumps(payload(), indent=1))
         return
     last_body, last_sent = None, 0.0
+    parent_pid = os.environ.get("AGENT_HUD_PARENT_PID")
     while True:
+        # Local helpers must not survive a crashed/force-quit HUD. Remote
+        # reporters deliberately run independently and have no parent setting.
+        if parent_pid and str(os.getppid()) != parent_pid:
+            return
         body = json.dumps(payload()).encode()
         now = time.time()
         if should_send(body, last_body, last_sent, now):
