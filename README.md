@@ -29,7 +29,8 @@ location to return to the work.
 
 <p align="center"><img src="assets/notch.gif" alt="Agent activity beside the MacBook notch" width="760"></p>
 
-**Version 0.4.1** restores the v0.3.5 interface and compact notification popups.
+**Version 0.4.2** keeps the classic interface and compact notification popups,
+and removes the blue rectangular focus outline around session cards.
 The larger decision cards and direct approval controls introduced in 0.4.0
 have been withdrawn. Claude permissions and questions are answered in the session.
 The **Go to session** improvements cover SSH reconnects in the original cmux pane,

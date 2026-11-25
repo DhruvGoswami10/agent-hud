@@ -917,6 +917,7 @@ private struct SessionCard: View {
     let selected: Bool
     let onSelect: () -> Void
     let onReview: () -> Void
+    @FocusState private var hasKeyboardFocus: Bool
 
     var body: some View {
         HStack(spacing: 9) {
@@ -969,9 +970,18 @@ private struct SessionCard: View {
                 }
             }
         )
+        .overlay {
+            // Selection already has a rounded highlight. Only add a quiet
+            // focus cue when tabbing to a different, unselected session.
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(.white.opacity(hasKeyboardFocus && !selected ? 0.3 : 0), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
         .focusable()
+        .focused($hasKeyboardFocus)
+        .focusEffectDisabled()
         .onKeyPress(.return) { onSelect(); return .handled }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(session.label + ", " + session.statusLabel)

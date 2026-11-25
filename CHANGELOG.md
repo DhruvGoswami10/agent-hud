@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.2 — 2026-11-25
+
+- Remove the blue rectangular system focus outline around session cards.
+  Keep the original rounded selection highlight, and use a subtle rounded
+  focus cue when navigating to an unselected card with the keyboard.
+- Mac advances to 0.4.2 (build 14). Reporter remains 0.4.1; no hook update
+  is needed for this visual fix.
+
 ## 0.4.1 — 2026-11-25
 
 - Restore the v0.3.5 notch interface, expanded panel, compact popups, and hover
