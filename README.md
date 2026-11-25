@@ -29,13 +29,16 @@ location to return to the work.
 
 <p align="center"><img src="assets/notch.gif" alt="Agent activity beside the MacBook notch" width="760"></p>
 
-**Version 0.4.0** adds Claude decision cards: inspect the actual request and choose
-**Approve once**, **Reject**, or **Go to session**. Multiple-choice questions and
-plans show their details with **Go to session**. Incoming session alerts queue;
-clicking the card body dismisses it without answering. Dismissed requests stay
-available from **requests** in the expanded HUD. It also retains the cmux/SSH,
-hover, music, copy confirmation, and **Off / Auto / Manual** Keep Awake improvements.
-See [CHANGELOG.md](CHANGELOG.md)
+**Version 0.4.1** restores the v0.3.5 interface and compact notification popups.
+The larger decision cards and direct approval controls introduced in 0.4.0
+have been withdrawn. Claude permissions and questions are answered in the session.
+The **Go to session** improvements cover SSH reconnects in the original cmux pane,
+including background Claude sessions that still report an old connection.
+It includes a brief **Copied!** confirmation for the browser pairing key and clear **Off / Auto / Manual**
+Keep Awake controls, countdowns, and separate Mac/display status. Click the
+header badge to choose a mode; its controls stay in place as you switch.
+The **Go to session** fixes cover cmux, full-screen desktops, and separate displays.
+Notification popups have no ×; click the popup to dismiss it. See [CHANGELOG.md](CHANGELOG.md)
 and the [audit resolution notes](docs/reliability-release.md).
 
 ## Install
@@ -64,10 +67,10 @@ The installer makes backups only when configuration changes. It preserves other
 hooks and chains the previous Codex notifier. Invalid configuration is left
 untouched. Restart existing agent sessions after installing; reload Cursor.
 Review and trust the optional Codex lifecycle hooks with `/hooks` in Codex.
-Codex lifecycle hooks observe events and never approve, deny, or continue an
-agent action. Claude's separate permission hook returns only your explicit
-choice on the HUD. Use `install-hooks.py --notify-only` to keep Claude alerts
-and question previews without installing approval replies.
+They observe events and never approve, deny, or continue an agent action.
+When upgrading from 0.4.0, reinstall hooks locally and run
+`bin/agent-hud-bootstrap HOST` on each configured SSH host to remove the old
+permission-reply hook. Other tools' hooks and permission settings are preserved.
 
 For a source checkout:
 
@@ -106,35 +109,6 @@ for browser tests. Full Xcode is required to build Safari or Watch targets.
 
 Screenshots use invented data (`make demo`). The older screenshot illustrates
 the visual style; 0.2.0 adds scrolling and more precise status labels.
-
-## Claude decisions
-
-Claude Code's `PermissionRequest` hook supplies the requested tool and its
-parameters. The HUD displays the complete supported request in a scrollable
-card. **Approve once** permits that invocation only; **Reject** tells Claude
-that you declined it. Neither choice changes permission modes or saves rules.
-Questions with several options, multiple questions, plans, and other input
-requests use **Go to session** so you can answer in Claude's full interface.
-
-New session alerts wait behind the card you are reading. Music, clipboard
-events, and hovering cannot replace its buttons. Clicking the card body only
-hides it and advances to the next queued alert; open **requests** in the HUD
-to revisit a pending card. An answer or a completed turn clears its question.
-
-Replies travel on the exact hook's waiting loopback connection, including over
-the existing SSH tunnel. Only the native HUD can grant or deny a request;
-browser bridges cannot create permission requests. A disconnected or expired request loses its buttons. After
-two minutes, or when you choose **Go to session**, the hook yields to Claude's
-normal permission flow. Ignoring, dismissing, losing a connection, or closing
-the app never grants permission. Requests too large for the card also fall
-back to the session. The HUD itself never executes the requested command.
-
-Update Claude hooks locally and with `agent-hud-bootstrap HOST` on each
-configured SSH host. If an existing Claude session has not loaded the new hooks,
-inspect `/hooks` and resume/restart that session when convenient. System banners
-offer **Review in HUD** and **Go to session** when macOS notifications are allowed;
-the notch cards work independently of that permission. Direct replies currently
-support Claude Code, not Codex, Cursor, or browser chat approvals.
 
 ## Clipboard, music, and keep-awake
 

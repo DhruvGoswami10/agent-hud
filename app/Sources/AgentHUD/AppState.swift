@@ -447,127 +447,9 @@ final class AppState: ObservableObject {
     }
     private var navigationRequest: String?
     private var navigationTask: Task<Void, Never>?
-    @Published private(set) var decisionEvents: [AgentEvent] = []
-    @Published private(set) var queuedAgentNotifications: [AgentEvent] = []
-    @Published private(set) var decisionResults: [String: String] = [:]
-    private var approvalDeadlines: [String: Date] = [:]
-    private var notificationAdvanceTask: Task<Void, Never>?
-    var approvalResponder: (String, ApprovalResolution) -> Bool = { _, _ in false }
-
-    func receiveApproval(_ request: ApprovalRequest) {
-        guard request.deadline > Date() else { return }
-        approvalDeadlines[request.id] = request.deadline
-        apply(request.event)
-    }
-
-    func canAnswerApproval(_ id: String, now: Date = Date()) -> Bool {
-        guard decisionResults[id] == nil, let deadline = approvalDeadlines[id] else { return false }
-        return deadline > now
-    }
-
-    func answerApproval(_ id: String, as choice: ApprovalResolution) {
-        guard [.allow, .deny].contains(choice), canAnswerApproval(id) else { return }
-        decisionResults[id] = "Sending…"
-        if !approvalResponder(id, choice) { finishApproval(id, as: .expired) }
-    }
-
-    func finishApproval(_ id: String, as result: ApprovalResolution) {
-        let event = decisionEvents.first(where: { $0.prompt?.id == id })
-        approvalDeadlines.removeValue(forKey: id)
-        decisionEvents.removeAll { $0.prompt?.id == id }
-        queuedAgentNotifications.removeAll { $0.prompt?.id == id }
-        decisionResults[id] = result.label
-        if decisionResults.count > 128 {
-            decisionResults = [id: result.label]
-        }
-        Notifier.shared.withdrawDecision(id)
-        if result == .allow || result == .deny {
-            if let event, !decisionEvents.contains(where: { $0.sourceKey == event.sourceKey }) {
-                upsertSession(AgentEvent(kind: .running, host: event.host, project: event.project,
-                    sessionId: event.sessionId, sessionName: event.sessionName, message: result.label,
-                    hook: "HUDDecision", app: event.app, focus: event.focus, image: nil, ts: Date()))
-                refreshCollapsedFrame()
-            }
-            // Keep the acknowledgement visible briefly before advancing the
-            // queue. A late callback must not dismiss a different request.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) { [weak self] in
-                guard let self, case .peek(.event(let event)) = self.hudState,
-                      event.prompt?.id == id else { return }
-                self.dismissNotification()
-            }
-        }
-    }
-
-    private func clearDecisions(for source: String, promptID: String? = nil, questionsOnly: Bool = false) {
-        let old = decisionEvents.filter {
-            $0.sourceKey == source && (promptID == nil || $0.prompt?.id == promptID)
-                && (!questionsOnly || approvalDeadlines[$0.prompt?.id ?? ""] == nil)
-        }
-        let ids = Set(old.compactMap { $0.prompt?.id })
-        for event in old {
-            guard let id = event.prompt?.id else { continue }
-            if approvalDeadlines[id] != nil { _ = approvalResponder(id, .session) }
-            approvalDeadlines.removeValue(forKey: id)
-            decisionResults[id] = "Answered in the session"
-            Notifier.shared.withdrawDecision(id)
-        }
-        decisionEvents.removeAll { ids.contains($0.prompt?.id ?? "") }
-        queuedAgentNotifications.removeAll { ids.contains($0.prompt?.id ?? "") }
-    }
-
-    /// Clicking the body hides a card; it does not answer its request. Pending
-    /// cards remain accessible through the requests button in the open HUD.
-    func dismissNotification() {
-        dismissNow()
-        guard !queuedAgentNotifications.isEmpty, !muted else { return }
-        notificationAdvanceTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 350_000_000)
-            guard let self, !Task.isCancelled, self.hudState.isCollapsed,
-                  !self.hovering, !self.muted, !self.queuedAgentNotifications.isEmpty else { return }
-            let next = self.queuedAgentNotifications.removeFirst()
-            self.presentAgentNotification(next)
-        }
-    }
-
-    private func presentAgentNotification(_ event: AgentEvent) {
-        show(.peek(.event(event)), autoCollapse: event.kind == .attention ? attentionPeekSeconds : donePeekSeconds)
-    }
-
-    func showDecision(_ id: String? = nil) {
-        guard let event = decisionEvents.first(where: { id == nil || $0.prompt?.id == id }) else { return }
-        notificationAdvanceTask?.cancel()
-        queuedAgentNotifications.removeAll { $0.id == event.id }
-        selectedSessionId = event.sourceKey
-        show(.peek(.event(event)), autoCollapse: nil, userInitiated: true)
-    }
-
-    func focusNotification(sourceKey: String, promptID: String = "", review: Bool = false) {
-        if review, !promptID.isEmpty, decisionEvents.contains(where: { $0.prompt?.id == promptID }) {
-            showDecision(promptID)
-        } else if let session = sessions.first(where: { $0.id == sourceKey }) {
-            focusSession(session)
-        } else {
-            navigationMessage = "This session is no longer listed. Its notification may be out of date."
-            openPanel()
-        }
-    }
-
-    func focusEvent(_ event: AgentEvent) {
-        if let session = sessions.first(where: { $0.id == event.sourceKey }) {
-            focusSession(session)
-        } else {
-            upsertSession(event)
-            if let session = sessions.first(where: { $0.id == event.sourceKey }) { focusSession(session) }
-        }
-    }
 
     func focusSession(_ session: SessionInfo) {
         guard !navigationBusy else { return }
-        for event in decisionEvents where event.sourceKey == session.id {
-            if let id = event.prompt?.id, approvalDeadlines[id] != nil {
-                _ = approvalResponder(id, .session)
-            }
-        }
         navigationTask?.cancel()
         navigationRequest = nil
         navigationMessage = ""
@@ -770,24 +652,6 @@ final class AppState: ObservableObject {
             recentDeliveries.append(delivery)
             if recentDeliveries.count > 256 { recentDeliveries.removeFirst() }
         }
-        // The immediate structured request already represents this prompt;
-        // Claude's delayed generic notification must not replace or re-open it.
-        if event.kind == .attention, event.hook == "Notification",
-           decisionEvents.contains(where: { $0.sourceKey == event.sourceKey }) { return }
-        if event.hook != "registry", event.kind == .running || event.kind == .done {
-            if event.hook == "PostToolUse" {
-                clearDecisions(for: event.sourceKey,
-                               promptID: event.resolvedPromptID.isEmpty ? nil : event.resolvedPromptID,
-                               questionsOnly: true)
-            } else {
-                clearDecisions(for: event.sourceKey)
-            }
-        }
-        if event.kind == .attention, let prompt = event.prompt,
-           !decisionEvents.contains(where: { $0.prompt?.id == prompt.id }) {
-            decisionEvents.append(event)
-            if decisionEvents.count > 64 { decisionEvents.removeFirst() }
-        }
         events.insert(event, at: 0)
         if events.count > 150 { events.removeLast(events.count - 150) }
 
@@ -806,22 +670,13 @@ final class AppState: ObservableObject {
         let runDuration = Self.runLength(start: runStarts[event.sourceKey], end: event.ts)
         if event.kind == .done { runStarts.removeValue(forKey: event.sourceKey) }
 
-        if event.kind == .running, let pending = decisionEvents.first(where: { $0.sourceKey == event.sourceKey }) {
-            upsertSession(pending)
-        } else {
-            upsertSession(event)
-        }
+        upsertSession(event)
 
         if !hudState.isOpen {
-            if event.kind == .attention || event.kind == .done {
-                if case .peek(.event(let current)) = hudState, current.kind == .attention,
-                   (current.sourceKey != event.sourceKey ||
-                    decisionEvents.contains(where: { $0.prompt?.id == current.prompt?.id && current.prompt != nil })) {
-                    queuedAgentNotifications.append(event)
-                    if queuedAgentNotifications.count > 64 { queuedAgentNotifications.removeFirst() }
-                } else {
-                    presentAgentNotification(event)
-                }
+            switch event.kind {
+            case .attention: show(.peek(.event(event)), autoCollapse: attentionPeekSeconds)
+            case .done: show(.peek(.event(event)), autoCollapse: donePeekSeconds)
+            case .running, .info: break  // your own prompt isn't news
             }
         }
         let alerted = event.outcome != .unknown && Self.shouldAlert(kind: event.kind, runDuration: runDuration, muted: muted)
@@ -1113,10 +968,6 @@ final class AppState: ObservableObject {
             let id = key(e)
             latestEntries[id] = e
             if let i = sessions.firstIndex(where: { $0.id == id }) { applyStats(e, at: i) }
-            if decisionEvents.contains(where: { $0.sourceKey == id }) {
-                activeNow.insert(id)
-                continue // a registry heartbeat cannot answer a live question
-            }
             if e.isActive {
                 activeNow.insert(id)
                 localSessionActive(e, host: host, announce: primed && !last.contains(id))
@@ -1481,7 +1332,6 @@ final class AppState: ObservableObject {
     /// that lands in the middle of something. Hovering must not immediately
     /// re-open it, so the hover gate is told to stand down too.
     func dismissNow() {
-        notificationAdvanceTask?.cancel()
         hovering = false
         hoverTask?.cancel()
         dismissHandler?()
@@ -1508,17 +1358,12 @@ final class AppState: ObservableObject {
             // Cancelling the collapse also parks a hovered slide-out: it stays
             // put while you read it instead of retracting out from under you.
             collapseTask?.cancel()
-            if case .peek(.event(let event)) = hudState, event.prompt != nil { return }
             if case .peek = hudState, !hoverExpandsPeek { return }
             if !hudState.isOpen { openPanel() }
         } else {
             // Grace so edge-skimming and a wandering pointer inside the panel
             // don't snap it shut mid-read.
-            if case .peek(.event(let event)) = hudState, event.prompt != nil {
-                scheduleCollapse(after: attentionPeekSeconds)
-            } else {
-                scheduleCollapse(after: hoverCollapseDelay)
-            }
+            scheduleCollapse(after: hoverCollapseDelay)
         }
     }
 
@@ -1538,22 +1383,12 @@ final class AppState: ObservableObject {
         collapseTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(t * 1_000_000_000))
             guard let self, !Task.isCancelled, !self.hovering, !self.awakeControlsPresented else { return }
-            if case .peek(.event) = self.hudState, !self.queuedAgentNotifications.isEmpty {
-                self.dismissNotification()
-            } else {
-                self.collapse()
-            }
+            self.collapse()
         }
     }
 
-    private func show(_ target: HUDState, autoCollapse: TimeInterval?, userInitiated: Bool = false) {
-        if muted, !userInitiated, case .peek = target { return }
-        if case .peek(.event(let current)) = hudState, current.prompt != nil {
-            // Music/clipboard news must not move an approval button underneath
-            // the pointer. Agent notifications use the queue above.
-            if case .peek(.music) = target { return }
-            if case .peek(.clipboard) = target { return }
-        }
+    private func show(_ target: HUDState, autoCollapse: TimeInterval?) {
+        if muted, case .peek = target { return }
         if !target.isOpen { awakeControlsPresented = false }
         collapseTask?.cancel()
         withAnimation(target.isCollapsed ? animStyle.collapseAnimation : animStyle.animation) { hudState = target }

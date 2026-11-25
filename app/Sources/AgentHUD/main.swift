@@ -45,9 +45,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         statusItemController = StatusItemController(state: state)
         SettingsWindowController.shared = SettingsWindowController(state: state)
-        Notifier.shared.onAction = { [weak state] source, prompt, review in
-            Task { @MainActor in state?.focusNotification(sourceKey: source, promptID: prompt, review: review) }
-        }
         if !Playground.on { Notifier.shared.setup() }
         // Ask once shortly after launch too: the authorization callback can
         // land before the delegate is ready, and a permission revoked in
@@ -126,15 +123,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         state.webMusicQueue = server.musicCommands
         state.browserCommands = server.browserCommands
-        state.approvalResponder = { [weak server] id, choice in
-            server?.permissions.resolve(id, as: choice) ?? false
-        }
-        server.onApproval = { request in
-            DispatchQueue.main.async { MainActor.assumeIsolated { state.receiveApproval(request) } }
-        }
-        server.onApprovalEnded = { id, result in
-            DispatchQueue.main.async { MainActor.assumeIsolated { state.finishApproval(id, as: result) } }
-        }
         server.onBrowserFocus = { id, ok in
             Task { @MainActor in state.browserFocusFinished(id: id, ok: ok) }
         }

@@ -4,11 +4,8 @@ PRs and issues welcome. Ground rules:
 
 - **Identity is sacred**: the collapsed notch states — side indicator bars and
   the bottom glow line — stay. Redesigns build around them.
-- **Keep it peripheral**: show activity, navigate to its source, and let a user
-  explicitly answer one Claude permission request. Approval buttons must not
-  execute shell commands, synthesize terminal keystrokes, save permission rules,
-  or approve anything merely because a card was dismissed. Complex questions
-  and plans belong in the original session. Music controls remain supported.
+- **It's a peripheral, not a control center**: the HUD shows and notifies; it
+  doesn't grow workflows. (Music controls are the one grandfathered exception.)
 - Keep the event protocol dumb: anything that can `curl` JSON to
   `127.0.0.1:48085/event` is a valid source. New agent integrations should be
   small adapter scripts, not app changes.

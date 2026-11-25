@@ -81,13 +81,9 @@ final class EventServer {
     /// Optional: POST /music/commands → (command, explicit tab or nil).
     var onMusicCommand: ((String, String?) -> Void)?
     var onBrowserFocus: ((String, Bool) -> Void)?
-    var onApproval: ((ApprovalRequest) -> Void)?
-    var onApprovalEnded: ((String, ApprovalResolution) -> Void)?
-    let permissions = PermissionBroker()
     let musicCommands = CommandQueue()
     let browserCommands = CommandQueue(maxAge: 5)
     private var listener: NWListener?
-    var listeningPort: UInt16? { listener?.port?.rawValue }
     private let queue = DispatchQueue(label: "agenthud.server")
     /// Long-polls waiting for a command (server-queue confined). Answered the
     /// instant a command is pushed — click-to-audio without the poll gap.
@@ -137,7 +133,6 @@ final class EventServer {
     }
 
     func stop() {
-        permissions.cancelAll()
         listener?.cancel()
         listener = nil
         musicCommands.onPush = nil
@@ -221,42 +216,6 @@ final class EventServer {
         // The switch matches bare paths; a query string must not 404 them.
         let (path, query) = Self.splitTarget(req.path)
         switch (req.method, path) {
-        case ("POST", "/approval"):
-            // Paired web bridges have no approval capability. SSH hooks arrive
-            // over loopback with no browser Origin or client marker.
-            guard req.origin == nil, !req.browser, onApproval != nil else {
-                respond(conn, status: "403 Forbidden", body: #"{"ok":false}"#, origin: nil)
-                return
-            }
-            guard req.body.count <= 100_000,
-                  let obj = try? JSONSerialization.jsonObject(with: req.body) as? [String: Any],
-                  let request = ApprovalRequest(json: obj) else {
-                respond(conn, status: "400 Bad Request", body: #"{"ok":false}"#, origin: nil)
-                return
-            }
-            let timeout = DispatchWorkItem { [weak self] in
-                self?.permissions.resolve(request.id, as: .expired)
-            }
-            guard permissions.offer(request, finish: { [weak self] choice in
-                guard let self else { return }
-                self.queue.async {
-                    timeout.cancel()
-                    let body = #"{"request_id":"\#(request.clientID)","decision":"\#(choice.rawValue)"}"#
-                    self.respond(conn, status: "200 OK", body: body, origin: nil) { sent in
-                        self.onApprovalEnded?(request.id, sent ? choice : .disconnected)
-                    }
-                }
-            }) else {
-                respond(conn, status: "409 Conflict", body: #"{"ok":false}"#, origin: nil)
-                return
-            }
-            onApproval?(request)
-            queue.asyncAfter(deadline: .now() + ApprovalRequest.lifetime, execute: timeout)
-            // Detect a terminal answer, killed hook, broken tunnel, or closed
-            // Claude session. A disconnected request must lose its buttons.
-            conn.receive(minimumIncompleteLength: 1, maximumLength: 1) { [weak self] _, _, _, _ in
-                self?.permissions.resolve(request.id, as: .disconnected)
-            }
         case ("OPTIONS", _):
             // CORS/Private-Network preflight for browser-extension content
             // scripts. Only reached by an allowed origin (see the gate above).
@@ -434,15 +393,11 @@ final class EventServer {
         return "Access-Control-Allow-Origin: \(origin)\r\nVary: Origin\r\n"
     }
 
-    private func respond(_ conn: NWConnection, status: String, body: String, origin: String? = nil,
-                         completion: ((Bool) -> Void)? = nil) {
+    private func respond(_ conn: NWConnection, status: String, body: String, origin: String? = nil) {
         let head = "HTTP/1.1 \(status)\r\nContent-Type: application/json\r\n"
             + Self.corsHeader(origin)
             + "Content-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n"
-        conn.send(content: Data((head + body).utf8), completion: .contentProcessed { error in
-            completion?(error == nil)
-            conn.cancel()
-        })
+        conn.send(content: Data((head + body).utf8), completion: .contentProcessed { _ in conn.cancel() })
     }
 
     static func splitTarget(_ target: String) -> (path: String, query: String) {

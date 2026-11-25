@@ -9,7 +9,6 @@ import os
 import re
 import socket
 import sys
-import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hud_focus import capture_focus, remember_focus
@@ -117,58 +116,18 @@ def registry_name(session_id):
     return best
 
 
-def decision_prompt(d):
-    ev, tool = d.get("hook_event_name"), d.get("tool_name")
-    if ev == "PostToolUse":
-        return None
-    inp = d.get("tool_input") or {}
-    if not isinstance(inp, dict):
-        return None
-    if tool == "AskUserQuestion":
-        parts = []
-        for index, question in enumerate(inp.get("questions", [])[:8], 1):
-            if not isinstance(question, dict):
-                continue
-            text = question.get("question")
-            if not isinstance(text, str):
-                continue
-            parts.append(str(index) + ". " + text)
-            for option in question.get("options", [])[:12]:
-                if isinstance(option, dict) and isinstance(option.get("label"), str):
-                    parts.append("  • " + option["label"] + (" — " + str(option["description"]) if option.get("description") else ""))
-            if question.get("multiSelect"):
-                parts.append("  Choose one or more in Claude.")
-            parts.append("")
-        kind, title, detail = "question", "Claude has a question", "\n".join(parts).strip()
-    elif tool == "ExitPlanMode":
-        kind, title, detail = "plan", "Review Claude’s plan", str(inp.get("plan") or "Open the session to review the plan and choose how to continue.")
-    elif ev == "PermissionRequest":
-        kind, title = "permission", "Allow " + str(tool or "this action") + "?"
-        detail = json.dumps(inp, indent=2, ensure_ascii=False)
-    elif ev == "Notification":
-        kind, title, detail = "input", "Claude needs your input", str(d.get("message") or d.get("title") or "Open the session to continue.")
-    else:
-        return None
-    if len(detail.encode("utf-8")) > 32_000:
-        detail = detail.encode("utf-8")[:30_000].decode("utf-8", errors="ignore") + "\n\nMore details in the session."
-    return {"id": str(d.get("tool_use_id") or uuid.uuid4()), "kind": kind, "title": title[:200], "detail": detail}
-
-
-def build_event(d):
-    if not isinstance(d, dict):
-        return None
+def main():
+    try:
+        d = json.load(sys.stdin)
+    except Exception:
+        d = {}
     ev = d.get("hook_event_name", "")
     kind = {
         "UserPromptSubmit": "running",
         "Stop": "done",
         "Notification": "attention",
-        "PermissionRequest": "attention",
-        "PreToolUse": "attention",
-        "PostToolUse": "running",
     }.get(ev)
     if not kind:
-        return
-    if ev in ("PreToolUse", "PostToolUse") and d.get("tool_name") not in ("AskUserQuestion", "ExitPlanMode"):
         return
 
     # Claude Code fires Notification for real permission prompts, for
@@ -179,15 +138,11 @@ def build_event(d):
     # session for a whole turn. Idle pings stay dropped; the rest demote to
     # info (visible in the feed, no glow, no banner).
     if ev == "Notification":
-        notification_type = d.get("notification_type") or ""
         text = ((d.get("message") or "") + " " + (d.get("title") or "")).lower()
-        if notification_type == "idle_prompt" or (not notification_type and
-                ("waiting for your input" in text or "waiting for input" in text)):
+        if "waiting for your input" in text or "waiting for input" in text:
             return
-        actionable = notification_type in ("permission_prompt", "elicitation_dialog", "elicitation_url_dialog",
-                                           "agent_needs_input", "quota_auto_resume_stale", "quota_auto_resume_disabled")
-        if not notification_type:
-            actionable = ("permission" in text or "approval" in text or "waiting" in text or "needs you" in text)
+        actionable = ("permission" in text or "approval" in text
+                      or "waiting" in text or "needs you" in text)
         if not actionable:
             kind = "info"
 
@@ -208,12 +163,6 @@ def build_event(d):
             msg = (d.get("prompt") or "").strip()[:220]
         elif ev == "Notification":
             msg = (d.get("message") or d.get("title") or "").strip()[:300]
-        elif ev == "PostToolUse":
-            msg = "Continuing after your response"
-
-    prompt = decision_prompt(d) if kind == "attention" else None
-    if prompt and not msg:
-        msg = (prompt["detail"] or prompt["title"])[:300]
 
     name = registry_name(d.get("session_id", ""))
     if title and (not name or AUTO_NAME.match(name)):
@@ -234,21 +183,7 @@ def build_event(d):
         "message": msg,
         "hook": ev,
     }
-    if prompt:
-        out["prompt"] = prompt
-        out["event_id"] = "prompt:" + prompt["id"]
-    if ev == "PostToolUse":
-        out["resolved_prompt_id"] = str(d.get("tool_use_id") or "")
-    return out
-
-
-def main():
-    try:
-        event = build_event(json.load(sys.stdin))
-        if event:
-            print(json.dumps(event))
-    except (ValueError, TypeError, AttributeError):
-        pass
+    print(json.dumps(out))
 
 
 if __name__ == "__main__":

@@ -260,11 +260,7 @@ final class NotchWindowController {
             return sideBars
                 ? NSSize(width: m.notchWidth + 16, height: m.notchHeight)
                 : NSSize(width: m.notchWidth, height: m.notchHeight + 4)
-        case .peek(let content):
-            if case .event(let event) = content, event.prompt != nil {
-                return NSSize(width: max(m.notchWidth + 240, 520),
-                              height: (m.hasNotch ? m.notchHeight : 12) + 244)
-            }
+        case .peek:
             var w = max(m.notchWidth + 240, 470)
             var h = m.hasNotch ? m.notchHeight + 80 : 90
             if let p = peekPreview {

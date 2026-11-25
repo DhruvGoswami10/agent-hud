@@ -870,7 +870,7 @@ def payload():
     # Sessions first: the Codex scan is what picks up its rate-limit reading.
     codex = codex_snapshot()
     body = {"host": HOST, "sessions": snapshot() + codex, "usage": usage_windows(),
-            "providers": ["claude", "codex"], "protocol": 2, "reporter_version": "0.4.0"}
+            "providers": ["claude", "codex"], "protocol": 2, "reporter_version": "0.4.1"}
     lim = limits()
     if lim:
         body["limits"] = lim

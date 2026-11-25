@@ -49,15 +49,13 @@ def main():
     elif args[:1] == ['--uninstall']:
         uninstall()
     else:
-        notify_only = '--notify-only' in args
+        # 0.4.0 offered a separate permission-reply hook. Restore observational
+        # hooks and remove only our old handler when upgrading from that version.
         args = [arg for arg in args if arg != '--notify-only']
         forwarder = Path(args[0]) if args else BIN / 'agent-hud-send'
         path = args[1] if len(args) > 1 else Path.home() / '.claude/settings.json'
-        questions = '^(AskUserQuestion|ExitPlanMode)$'
-        json_hooks(path, forwarder, ('UserPromptSubmit', 'Notification', 'Stop', 'PreToolUse', 'PostToolUse'),
-                   matchers={'PreToolUse': questions, 'PostToolUse': questions})
-        json_hooks(path, forwarder.parent / 'agent-hud-permission', ('PermissionRequest',),
-                   timeout=130, remove=notify_only)
+        json_hooks(path, forwarder, ('UserPromptSubmit', 'Notification', 'Stop'))
+        json_hooks(path, forwarder.parent / 'agent-hud-permission', (), remove=True)
         print('Claude hooks installed. Restart existing Claude sessions.', file=sys.stderr)
 
 

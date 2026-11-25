@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.1 — 2026-11-25
+
+- Restore the v0.3.5 notch interface, expanded panel, compact popups, and hover
+  behavior. Remove the larger decision cards, request buttons, and notification
+  action layout introduced in 0.4.0.
+- Return Claude integration to observational notifications. Hook installation
+  removes Agent HUD's 0.4.0 permission-reply and question hooks while preserving
+  other tools' hooks. Answer permissions and questions in the original session.
+- Retain the cmux/SSH navigation, music, copy confirmation, Keep Awake controls,
+  reporter cleanup, and reliable asynchronous tests.
+- Mac and reporter advance to 0.4.1 (Mac build 13).
+
 ## 0.4.0 — 2026-11-25
 
 - Show Claude permission requests with their actual tool parameters and explicit
