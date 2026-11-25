@@ -102,7 +102,10 @@ final class DecisionNotificationTests: XCTestCase {
         state.dismissNotification()
         XCTAssertTrue(state.hudState.isCollapsed)
         XCTAssertEqual(state.decisionEvents.count, 2)
-        try? await Task.sleep(nanoseconds: 450_000_000)
+        let deadline = Date().addingTimeInterval(2)
+        while visibleID(state) != second.id && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
         XCTAssertEqual(visibleID(state), second.id)
         state.showDecision(first.id)
         XCTAssertEqual(visibleID(state), first.id, "a dismissed request remains reviewable")
@@ -220,8 +223,9 @@ final class DecisionNotificationTests: XCTestCase {
 
     func testHoverCannotMoveApprovalButtonsByOpeningTheFullPanel() {
         let state = state(), request = approval()
+        let original = state.hoverExpandsPeek
         state.hoverExpandsPeek = true
-        defer { state.hoverExpandsPeek = false }
+        defer { state.hoverExpandsPeek = original }
         state.receiveApproval(request)
         state.hoverChanged(true)
         XCTAssertEqual(visibleID(state), request.id)
@@ -239,8 +243,9 @@ final class DecisionNotificationTests: XCTestCase {
     func testMovingFromTheExpandedPanelToARequestDoesNotImmediatelyCollapseIt() async {
         let state = state(), request = approval()
         state.receiveApproval(request)
+        let original = state.hoverCollapseDelay
         state.hoverCollapseDelay = 0.01
-        defer { state.hoverCollapseDelay = 0.4 }
+        defer { state.hoverCollapseDelay = original }
         state.showDecision(request.id)
         state.hoverChanged(false)
         try? await Task.sleep(nanoseconds: 100_000_000)

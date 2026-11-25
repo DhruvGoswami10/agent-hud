@@ -80,6 +80,15 @@ final class AwakeControlsTests: XCTestCase {
                            sessionName: "test", message: "", hook: "test", image: nil, ts: Date()))
     }
 
+    private func waitForCollapse(_ state: AppState) async throws {
+        // The scheduled task may start late on a loaded CI runner. Observe the
+        // transition with a bounded wait instead of assuming 80 ms is enough.
+        let deadline = Date().addingTimeInterval(2)
+        while !state.hudState.isCollapsed && Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
     func testOffReleasesAutomaticAndManualHoldsEvenWhenAgentsAreBusy() async {
         await withState { s in
             working(s)
@@ -149,7 +158,7 @@ final class AwakeControlsTests: XCTestCase {
             try await Task.sleep(nanoseconds: 80_000_000)
             XCTAssertTrue(s.hudState.isOpen)
             s.awakeControlsPresented = false
-            try await Task.sleep(nanoseconds: 80_000_000)
+            try await waitForCollapse(s)
             XCTAssertTrue(s.hudState.isCollapsed)
             s.hoverChanged(true)
             XCTAssertTrue(s.hudState.isOpen, "closing awake controls must not break the next hover")
@@ -165,7 +174,7 @@ final class AwakeControlsTests: XCTestCase {
             s.hoverCollapseDelay = 0.02
             s.hoverChanged(true)
             s.hoverChanged(false)
-            try await Task.sleep(nanoseconds: 80_000_000)
+            try await waitForCollapse(s)
             XCTAssertTrue(s.hudState.isCollapsed)
         }
     }
